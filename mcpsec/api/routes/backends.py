@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+import os
+from typing import Any
+
+import yaml
+from fastapi import APIRouter, HTTPException
+
+from api.state import state
+
+router = APIRouter(prefix="/api/backends")
+
+_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "mcpsec-config.yaml")
+
+
+def _save_config() -> None:
+    if state.config is None:
+        return
+    path = os.path.abspath(_CONFIG_PATH)
+    with open(path, "w") as f:
+        yaml.dump(state.config.model_dump(), f, default_flow_style=False)
+
+
+@router.get("")
+async def list_backends() -> list[dict[str, Any]]:
+    if state.config is None:
+        return []
+    result = []
+    for backend in state.config.backends:
+        entry = backend.model_dump()
+        # Determine running status from proxy transport if available
+        running = False
+        if state.proxy is not None and state.proxy._transport is not None:
+            running = backend.name in state.proxy._transport.running_backends()
+        entry["status"] = "running" if running else "stopped"
+        result.append(entry)
+    return result
+
+
+@router.post("")
+async def add_backend(backend_data: dict[str, Any]) -> dict[str, Any]:
+    if state.config is None:
+        raise HTTPException(status_code=503, detail="Config not loaded.")
+    from config import BackendConfig  # noqa: PLC0415
+
+    try:
+        new_backend = BackendConfig.model_validate(backend_data)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    state.config.backends.append(new_backend)
+    _save_config()
+    return new_backend.model_dump()
+
+
+@router.put("/{name}")
+async def update_backend(name: str, update: dict[str, Any]) -> dict[str, Any]:
+    if state.config is None:
+        raise HTTPException(status_code=503, detail="Config not loaded.")
+
+    for i, backend in enumerate(state.config.backends):
+        if backend.name == name:
+            merged = backend.model_dump()
+            merged.update(update)
+            from config import BackendConfig  # noqa: PLC0415
+
+            try:
+                state.config.backends[i] = BackendConfig.model_validate(merged)
+            except Exception as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            _save_config()
+            return state.config.backends[i].model_dump()
+
+    raise HTTPException(status_code=404, detail=f"Backend '{name}' not found.")
+
+
+@router.delete("/{name}")
+async def delete_backend(name: str) -> dict[str, Any]:
+    if state.config is None:
+        raise HTTPException(status_code=503, detail="Config not loaded.")
+
+    for i, backend in enumerate(state.config.backends):
+        if backend.name == name:
+            state.config.backends.pop(i)
+            _save_config()
+            return {"deleted": name}
+
+    raise HTTPException(status_code=404, detail=f"Backend '{name}' not found.")

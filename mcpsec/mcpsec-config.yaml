@@ -1,0 +1,31 @@
+proxy:
+  transport: stdio
+  port: 3001
+
+api:
+  port: 8080
+  enabled: true
+
+backends:
+  - name: filesystem
+    transport: stdio
+    command: "npx"
+    args: ["@modelcontextprotocol/server-filesystem", "/tmp"]
+  - name: email
+    transport: stdio
+    command: "python"
+    args: ["email_server.py"]
+
+enforcement:
+  default_mode: alert
+  rules_file: rules.yaml
+
+session:
+  alert_timeout_minutes: 30
+  sliding_window_size: 10
+
+features:
+  embedding_filter: false
+  llm_evaluator: false
+  anomaly_detection: true
+  dashboard: true

@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+import sys
+
+
+def _setup_logging(level: str = "INFO") -> None:
+    fmt = "%(asctime)s [%(levelname)-8s] %(name)-20s %(message)s"
+    datefmt = "%Y-%m-%d %H:%M:%S"
+    logging.basicConfig(level=getattr(logging, level.upper(), logging.INFO), format=fmt, datefmt=datefmt)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="MCPSec — MCP Security Proxy")
+    parser.add_argument(
+        "--config",
+        default="mcpsec-config.yaml",
+        help="Path to mcpsec-config.yaml (default: mcpsec-config.yaml)",
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Log level (default: INFO)",
+    )
+    args = parser.parse_args()
+
+    _setup_logging(args.log_level)
+    logger = logging.getLogger("main")
+
+    # Load config
+    from config import load_config  # noqa: PLC0415
+
+    try:
+        config = load_config(args.config)
+    except FileNotFoundError:
+        print(f"ERROR: Config file not found: {args.config}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"ERROR: Invalid config: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    logger.info("MCPSec starting... (transport=%s)", config.proxy.transport)
+
+    from proxy.core import ProxyCore  # noqa: PLC0415
+
+    core = ProxyCore(config)
+
+    # Populate shared API state
+    import api.state as api_state  # noqa: PLC0415
+
+    api_state.state.proxy = core
+    api_state.state.router = core.router
+    api_state.state.sessions = core.session_manager
+    api_state.state.config = config
+
+    async def _run() -> None:
+        tasks: list[asyncio.Task] = []  # type: ignore[type-arg]
+
+        if config.api.enabled:
+            from api.server import create_app, start_api_server  # noqa: PLC0415
+
+            app = create_app()
+            api_task = asyncio.create_task(
+                start_api_server(app, host="0.0.0.0", port=config.api.port)
+            )
+            tasks.append(api_task)
+
+        try:
+            await core.start()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            await core.stop()
+            for t in tasks:
+                t.cancel()
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        logger.info("MCPSec stopped by user.")
+
+
+if __name__ == "__main__":
+    main()
