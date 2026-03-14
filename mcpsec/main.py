@@ -6,10 +6,22 @@ import logging
 import sys
 
 
-def _setup_logging(level: str = "INFO") -> None:
+def _setup_logging(level: str = "INFO", log_file: str | None = None) -> None:
     fmt = "%(asctime)s [%(levelname)-8s] %(name)-20s %(message)s"
     datefmt = "%Y-%m-%d %H:%M:%S"
-    logging.basicConfig(level=getattr(logging, level.upper(), logging.INFO), format=fmt, datefmt=datefmt)
+    numeric_level = getattr(logging, level.upper(), logging.INFO)
+    root = logging.getLogger()
+    root.setLevel(numeric_level)
+    formatter = logging.Formatter(fmt, datefmt=datefmt)
+    if log_file:
+        fh = logging.FileHandler(log_file, encoding="utf-8")
+        fh.setFormatter(formatter)
+        root.addHandler(fh)
+    else:
+        # stderr handler (captured/swallowed when spawned by Claude Code)
+        sh = logging.StreamHandler()
+        sh.setFormatter(formatter)
+        root.addHandler(sh)
 
 
 def main() -> None:
@@ -25,9 +37,14 @@ def main() -> None:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Log level (default: INFO)",
     )
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        help="Write logs to this file instead of stderr (required when spawned by Claude Code)",
+    )
     args = parser.parse_args()
 
-    _setup_logging(args.log_level)
+    _setup_logging(args.log_level, args.log_file)
     logger = logging.getLogger("main")
 
     # Load config

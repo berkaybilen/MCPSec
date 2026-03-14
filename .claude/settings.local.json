@@ -14,7 +14,9 @@
       "Read(//usr/**)",
       "Bash(PYTHONPATH=. .venv/bin/python3:*)",
       "Bash(brew:*)",
-      "Bash(/opt/homebrew/bin/python3.11:*)"
+      "Bash(/opt/homebrew/bin/python3.11:*)",
+      "Bash(ls:*)",
+      "Bash(PYTHONPATH=. .venv/bin/python3.11:*)"
     ]
   }
 }

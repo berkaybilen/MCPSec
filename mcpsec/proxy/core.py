@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from config import MCPSecConfig
+from discovery.discovery import ToolDiscovery
 from proxy.base import MCPMessage
 from proxy.router import Router, ToolNotFoundError
 from proxy.session import Session, SessionEvent, SessionManager
@@ -23,6 +24,7 @@ class ProxyCore:
         self._transport: StdioTransport | None = None
         self._running = False
         self._current_session: Session | None = None
+        self.discovery: ToolDiscovery | None = None
 
     @property
     def is_running(self) -> bool:
@@ -47,6 +49,17 @@ class ProxyCore:
         else:
             logger.warning("No backends available; routing table is empty.")
 
+        # Tool discovery
+        self.discovery = ToolDiscovery(self._transport, backend_names, self._config)
+        try:
+            discovery_result = await self.discovery.run()
+            logger.info(
+                "Discovery complete: %d backends processed.",
+                len(discovery_result.get("backends", {})),
+            )
+        except Exception as exc:
+            logger.error("Tool discovery failed (non-fatal): %s", exc)
+
         self._running = True
         await self._message_loop()
 
@@ -58,10 +71,12 @@ class ProxyCore:
 
     async def _message_loop(self) -> None:
         assert self._transport is not None
+        logger.debug("Message loop started. Routing table: %s", self._router.get_routing_table())
 
         while self._running:
             try:
                 msg = await self._transport.receive_message()
+                logger.debug("<<< client  method=%s id=%s params=%s", msg.method, msg.id, msg.params)
             except EOFError:
                 logger.info("Client disconnected (EOF on stdin).")
                 break
@@ -71,6 +86,7 @@ class ProxyCore:
 
             try:
                 await self._handle_message(msg)
+                logger.debug(">>> handled method=%s id=%s", msg.method, msg.id)
             except Exception as exc:
                 logger.error(
                     "Unhandled exception processing message: %s\n%s", exc, traceback.format_exc()
@@ -80,6 +96,18 @@ class ProxyCore:
 
     async def _handle_message(self, msg: MCPMessage) -> None:
         assert self._transport is not None
+
+        # JSON-RPC response (no method) — forward to backend, no reply expected
+        if msg.method is None:
+            logger.debug("Forwarding JSON-RPC response id=%s to backends", msg.id)
+            await self._handle_response(msg)
+            return
+
+        # Notification (no id) — fire-and-forget to all backends, no reply expected
+        if msg.id is None:
+            logger.debug("Forwarding notification method=%s to backends", msg.method)
+            await self._handle_notification(msg)
+            return
 
         if msg.method == "initialize":
             await self._handle_initialize(msg)
@@ -97,15 +125,21 @@ class ProxyCore:
         self._current_session = session
         logger.info("Session created: %s", session.session_id)
 
-        # Forward to all backends; merge capabilities if needed
-        backend_names = self._transport.running_backends()
-        if not backend_names:
-            err = MCPMessage.make_error(msg.id, -32000, "No backends available.")
-            await self._transport.send_to_client(err)
-            return
+        # Initialize all backends (fire-and-forget — we don't relay their response to the client)
+        for backend_name in self._transport.running_backends():
+            await self._transport.send_to_backend(backend_name, msg)
+            logger.debug("Backend '%s' initialized", backend_name)
 
-        # Forward to first backend and relay response
-        response = await self._transport.send_to_backend(backend_names[0], msg)
+        # Respond with MCPSec's own identity — not the backend's
+        response = MCPMessage(
+            id=msg.id,
+            result={
+                "protocolVersion": "2025-11-25",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "mcpsec", "version": "0.1.0"},
+            },
+            raw={},
+        )
         await self._transport.send_to_client(response)
 
     async def _handle_tools_list(self, msg: MCPMessage) -> None:
@@ -137,7 +171,9 @@ class ProxyCore:
         # Resolve backend
         try:
             backend_name = self._router.resolve(tool_name)
+            logger.debug("tool '%s' resolved to backend '%s'", tool_name, backend_name)
         except ToolNotFoundError as exc:
+            logger.warning("BLOCKED tools/call: %s | routing table: %s", exc, self._router.get_routing_table())
             err = MCPMessage.make_error(msg.id, -32601, str(exc))
             await self._transport.send_to_client(err)
             return
@@ -178,6 +214,19 @@ class ProxyCore:
         await _broadcast_event(session.session_id, response_event)
 
         await self._transport.send_to_client(response)
+
+    async def _handle_notification(self, msg: MCPMessage) -> None:
+        """Fire-and-forget: forward notification to all backends, no response expected."""
+        assert self._transport is not None
+        for backend_name in self._transport.running_backends():
+            await self._transport.send_notification_to_backend(backend_name, msg)
+
+    async def _handle_response(self, msg: MCPMessage) -> None:
+        """Forward a JSON-RPC response (from client) back to the originating backend."""
+        assert self._transport is not None
+        # Best-effort: send to all backends — only the one that issued the request will care
+        for backend_name in self._transport.running_backends():
+            await self._transport.send_notification_to_backend(backend_name, msg)
 
     async def _handle_fallback(self, msg: MCPMessage) -> None:
         assert self._transport is not None

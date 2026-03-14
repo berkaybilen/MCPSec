@@ -10,11 +10,11 @@ backends:
   - name: filesystem
     transport: stdio
     command: "npx"
-    args: ["@modelcontextprotocol/server-filesystem", "/tmp"]
-  - name: email
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/berkaybilen/Desktop", "/Users/berkaybilen/Documents", "/tmp"]
+  - name: everything
     transport: stdio
-    command: "python"
-    args: ["email_server.py"]
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-everything"]
 
 enforcement:
   default_mode: alert
@@ -29,3 +29,10 @@ features:
   llm_evaluator: false
   anomaly_detection: true
   dashboard: true
+
+discovery:
+  schema_probing: true
+  hidden_tool_detection: true
+  tech_fingerprinting: true
+  change_detection: true
+  probing_timeout_ms: 5000

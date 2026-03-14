@@ -43,6 +43,14 @@ class FeaturesConfig(BaseModel):
     dashboard: bool = True
 
 
+class DiscoveryConfig(BaseModel):
+    schema_probing: bool = True
+    hidden_tool_detection: bool = True
+    tech_fingerprinting: bool = True
+    change_detection: bool = True
+    probing_timeout_ms: int = 5000
+
+
 class MCPSecConfig(BaseModel):
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
@@ -50,6 +58,7 @@ class MCPSecConfig(BaseModel):
     enforcement: EnforcementConfig = Field(default_factory=EnforcementConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
+    discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
 
 
 def load_config(path: str) -> MCPSecConfig:

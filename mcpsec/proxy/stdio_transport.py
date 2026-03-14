@@ -74,31 +74,49 @@ class StdioTransport(BaseTransport):
         payload = (json.dumps(msg.to_dict()) + "\n").encode()
         try:
             assert proc.stdin is not None
+            assert proc.stdout is not None
+            logger.debug(">>> backend[%s] %s", backend_name, payload.decode().strip())
             proc.stdin.write(payload)
             await proc.stdin.drain()
 
-            assert proc.stdout is not None
-            line = await proc.stdout.readline()
-            if not line:
-                return MCPMessage.make_error(
-                    msg.id, -32000, f"Backend '{backend_name}' closed connection."
-                )
-            data: dict[str, Any] = json.loads(line.strip())
-            return MCPMessage.from_dict(data)
+            # Loop until we get the response matching our request id.
+            # Backends may send server-initiated requests/notifications first.
+            while True:
+                line = await proc.stdout.readline()
+                logger.debug("<<< backend[%s] %s", backend_name, line.decode(errors="replace").strip() if line else "<empty>")
+                if not line:
+                    return MCPMessage.make_error(
+                        msg.id, -32000, f"Backend '{backend_name}' closed connection."
+                    )
+                data: dict[str, Any] = json.loads(line.strip())
+                incoming = MCPMessage.from_dict(data)
+
+                # Server-initiated request (has method + id) — ack it inline so backend unblocks
+                if incoming.method is not None and incoming.id is not None:
+                    logger.debug(
+                        "backend[%s] sent server request '%s' id=%s; acknowledging inline",
+                        backend_name, incoming.method, incoming.id,
+                    )
+                    ack = json.dumps({"jsonrpc": "2.0", "id": incoming.id, "result": {}}) + "\n"
+                    proc.stdin.write(ack.encode())
+                    await proc.stdin.drain()
+                    continue
+
+                # Server-initiated notification (has method, no id) — discard
+                if incoming.method is not None and incoming.id is None:
+                    logger.debug("backend[%s] sent notification '%s'; discarding", backend_name, incoming.method)
+                    continue
+
+                # This is a response — return it (id match not strictly required, backends always respond in order)
+                return incoming
+
         except json.JSONDecodeError as exc:
-            raw_content = line.decode(errors="replace") if "line" in dir() else ""
-            logger.error(
-                "Backend '%s' returned malformed JSON: %s | raw: %s",
-                backend_name,
-                exc,
-                raw_content,
-            )
+            logger.error("Backend '%s' returned malformed JSON: %s", backend_name, exc)
             return MCPMessage.make_error(
                 msg.id, -32000, f"Backend '{backend_name}' returned malformed JSON."
             )
         except Exception as exc:
             logger.error("Error communicating with backend '%s': %s", backend_name, exc)
-            # Mark process as dead and try respawn for next call
             if proc.returncode is None:
                 proc.kill()
             self._processes.pop(backend_name, None)
@@ -108,6 +126,20 @@ class StdioTransport(BaseTransport):
             return MCPMessage.make_error(
                 msg.id, -32000, f"Backend '{backend_name}' died during tool call."
             )
+
+    async def send_notification_to_backend(self, backend_name: str, msg: MCPMessage) -> None:
+        """Send a message to a backend without waiting for a response (notifications/responses)."""
+        proc = self._processes.get(backend_name)
+        if proc is None or proc.returncode is not None:
+            return
+        payload = (json.dumps(msg.to_dict()) + "\n").encode()
+        try:
+            assert proc.stdin is not None
+            logger.debug(">>> backend[%s] (no-reply) %s", backend_name, payload.decode().strip())
+            proc.stdin.write(payload)
+            await proc.stdin.drain()
+        except Exception as exc:
+            logger.warning("Failed to send notification to backend '%s': %s", backend_name, exc)
 
     async def close(self) -> None:
         for name, proc in list(self._processes.items()):
