@@ -29,7 +29,9 @@ class Router:
                 params={},
                 raw={},
             )
+            logger.debug("Querying tools/list from backend '%s'", backend_name)
             response = await transport.send_to_backend(backend_name, request)
+            logger.debug("Backend '%s' tools/list response: result=%s error=%s", backend_name, response.result, response.error)
 
             if response.error:
                 logger.warning(

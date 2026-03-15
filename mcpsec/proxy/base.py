@@ -61,5 +61,9 @@ class BaseTransport(ABC):
         """Forward a message to a specific backend and return its response."""
 
     @abstractmethod
+    async def send_notification_to_backend(self, backend_name: str, msg: "MCPMessage") -> None:
+        """Send a message to a backend without waiting for a response."""
+
+    @abstractmethod
     async def close(self) -> None:
         """Terminate all backend processes and clean up."""
