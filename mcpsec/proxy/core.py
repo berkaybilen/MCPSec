@@ -6,8 +6,10 @@ import traceback
 from datetime import datetime, timezone
 from typing import Any
 
+from analysis.regex_filter import analyze_request, analyze_response
 from config import MCPSecConfig
 from discovery.discovery import ToolDiscovery
+from enforcement.engine import decide
 from proxy.base import MCPMessage
 from proxy.router import Router, ToolNotFoundError
 from proxy.session import Session, SessionEvent, SessionManager
@@ -198,17 +200,33 @@ class ProxyCore:
         session.add_event(request_event)
         await _broadcast_event(session.session_id, request_event)
 
-        # TODO: run analysis pipeline here (regex, chain tracking, enforcement)
+        # Request analysis
+        req_flags = analyze_request(tool_name, msg.params)
+        req_decision = decide(req_flags, self._config.enforcement.default_mode)
+        request_event.flags = req_flags
+        request_event.decision = req_decision
+
+        if req_decision == "block":
+            logger.warning("BLOCKED request: tool=%s flags=%s", tool_name, req_flags)
+            err = MCPMessage.make_error(msg.id, -32000, f"Blocked by MCPSec: {req_flags}")
+            await self._transport.send_to_client(err)
+            return
 
         # Forward to backend
         response = await self._transport.send_to_backend(backend_name, msg)
 
-        # Record response event
+        # Response analysis
+        resp_content = response.result or response.error or {}
+        resp_flags = analyze_response(tool_name, resp_content)
+        resp_decision = decide(resp_flags, self._config.enforcement.default_mode)
+
         response_event = SessionEvent(
             timestamp=datetime.now(tz=timezone.utc),
             direction="response",
             tool_name=tool_name,
-            content=response.result or response.error or {},
+            content=resp_content,
+            flags=resp_flags,
+            decision=resp_decision,
         )
         session.add_event(response_event)
         await _broadcast_event(session.session_id, response_event)
