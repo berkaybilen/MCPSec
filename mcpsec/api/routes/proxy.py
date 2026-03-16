@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from api.state import state
+from ..state import state
 
 router = APIRouter(prefix="/api/proxy")
 

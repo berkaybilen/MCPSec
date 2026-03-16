@@ -1,4 +1,4 @@
-from api.routes import (  # noqa: F401
+from . import (  # noqa: F401
     analysis,
     backends,
     config,

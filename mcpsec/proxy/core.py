@@ -6,14 +6,14 @@ import traceback
 from datetime import datetime, timezone
 from typing import Any
 
-from analysis.regex_filter import analyze_request, analyze_response
-from config import MCPSecConfig
-from discovery.discovery import ToolDiscovery
-from enforcement.engine import decide
-from proxy.base import MCPMessage
-from proxy.router import Router, ToolNotFoundError
-from proxy.session import Session, SessionEvent, SessionManager
-from proxy.stdio_transport import StdioTransport
+from ..analysis.regex_filter import analyze_request, analyze_response
+from ..config import MCPSecConfig
+from ..discovery.discovery import ToolDiscovery
+from ..enforcement.engine import decide
+from .base import MCPMessage
+from .router import Router, ToolNotFoundError
+from .session import Session, SessionEvent, SessionManager
+from .stdio_transport import StdioTransport
 
 logger = logging.getLogger("proxy.core")
 
@@ -51,16 +51,11 @@ class ProxyCore:
         else:
             logger.warning("No backends available; routing table is empty.")
 
-        # Tool discovery
+        # Tool discovery (background — must not block message loop)
+        import asyncio
+
         self.discovery = ToolDiscovery(self._transport, backend_names, self._config)
-        try:
-            discovery_result = await self.discovery.run()
-            logger.info(
-                "Discovery complete: %d backends processed.",
-                len(discovery_result.get("backends", {})),
-            )
-        except Exception as exc:
-            logger.error("Tool discovery failed (non-fatal): %s", exc)
+        asyncio.create_task(self._run_discovery())
 
         self._running = True
         await self._message_loop()
@@ -70,6 +65,16 @@ class ProxyCore:
         self._running = False
         if self._transport:
             await self._transport.close()
+
+    async def _run_discovery(self) -> None:
+        try:
+            discovery_result = await self.discovery.run()
+            logger.info(
+                "Discovery complete: %d backends processed.",
+                len(discovery_result.get("backends", {})),
+            )
+        except Exception as exc:
+            logger.error("Tool discovery failed (non-fatal): %s", exc)
 
     async def _message_loop(self) -> None:
         assert self._transport is not None
@@ -262,7 +267,7 @@ class ProxyCore:
 async def _broadcast_event(session_id: str, event: SessionEvent) -> None:
     """Forward event to WebSocket broadcaster (imported lazily to avoid circular imports)."""
     try:
-        from api.websocket import broadcast_event  # noqa: PLC0415
+        from ..api.websocket import broadcast_event  # noqa: PLC0415
         await broadcast_event(session_id, event)
     except Exception:
         pass

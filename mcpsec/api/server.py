@@ -7,7 +7,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import (
+from .routes import (
     analysis,
     backends,
     config,
@@ -19,7 +19,7 @@ from api.routes import (
     rules,
     sessions,
 )
-from api.websocket import router as ws_router
+from .websocket import router as ws_router
 
 logger = logging.getLogger("api.server")
 

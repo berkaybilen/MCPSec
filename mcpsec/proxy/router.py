@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from proxy.base import BaseTransport, MCPMessage
+from .base import BaseTransport, MCPMessage
 
 logger = logging.getLogger("proxy.router")
 

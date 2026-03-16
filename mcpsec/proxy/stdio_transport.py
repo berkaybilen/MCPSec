@@ -6,8 +6,8 @@ import logging
 import sys
 from typing import Any
 
-from config import BackendConfig
-from proxy.base import BaseTransport, MCPMessage
+from ..config import BackendConfig
+from .base import BaseTransport, MCPMessage
 
 logger = logging.getLogger("proxy.stdio")
 

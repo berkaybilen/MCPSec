@@ -7,10 +7,10 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from config import MCPSecConfig
-from discovery.tokenizer import tokenize
-from discovery.validator import Warning, validate_tool
-from proxy.base import BaseTransport, MCPMessage
+from ..config import MCPSecConfig
+from .tokenizer import tokenize
+from .validator import Warning, validate_tool
+from ..proxy.base import BaseTransport, MCPMessage
 
 logger = logging.getLogger("discovery")
 

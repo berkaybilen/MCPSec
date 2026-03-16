@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from proxy.session import SessionEvent
+from ..proxy.session import SessionEvent
 
 logger = logging.getLogger("api.websocket")
 

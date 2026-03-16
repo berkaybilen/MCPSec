@@ -48,7 +48,7 @@ def main() -> None:
     logger = logging.getLogger("main")
 
     # Load config
-    from config import load_config  # noqa: PLC0415
+    from .config import load_config  # noqa: PLC0415
 
     try:
         config = load_config(args.config)
@@ -61,12 +61,12 @@ def main() -> None:
 
     logger.info("MCPSec starting... (transport=%s)", config.proxy.transport)
 
-    from proxy.core import ProxyCore  # noqa: PLC0415
+    from .proxy.core import ProxyCore  # noqa: PLC0415
 
     core = ProxyCore(config)
 
     # Populate shared API state
-    import api.state as api_state  # noqa: PLC0415
+    from .api import state as api_state  # noqa: PLC0415
 
     api_state.state.proxy = core
     api_state.state.router = core.router
@@ -77,7 +77,7 @@ def main() -> None:
         tasks: list[asyncio.Task] = []  # type: ignore[type-arg]
 
         if config.api.enabled:
-            from api.server import create_app, start_api_server  # noqa: PLC0415
+            from .api.server import create_app, start_api_server  # noqa: PLC0415
 
             app = create_app()
             api_task = asyncio.create_task(
