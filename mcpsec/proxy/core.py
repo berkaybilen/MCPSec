@@ -27,6 +27,8 @@ class ProxyCore:
         self._running = False
         self._current_session: Session | None = None
         self.discovery: ToolDiscovery | None = None
+        self._discovery_started = False
+        self._tools_cache: list[dict[str, Any]] | None = None
 
     @property
     def is_running(self) -> bool:
@@ -45,18 +47,9 @@ class ProxyCore:
         self._transport = StdioTransport(self._config.backends)
         await self._transport.start()
 
-        backend_names = self._transport.running_backends()
-        if backend_names:
-            await self._router.build(self._transport, backend_names)
-        else:
-            logger.warning("No backends available; routing table is empty.")
-
-        # Tool discovery (background — must not block message loop)
-        import asyncio
-
-        self.discovery = ToolDiscovery(self._transport, backend_names, self._config)
-        asyncio.create_task(self._run_discovery())
-
+        # Routing table and discovery are deferred until after initialize
+        # handshake. MCP protocol requires initialize before any other
+        # request — Gmail MCP enforces this strictly.
         self._running = True
         await self._message_loop()
 
@@ -132,16 +125,28 @@ class ProxyCore:
         self._current_session = session
         logger.info("Session created: %s", session.session_id)
 
-        # Initialize all backends (fire-and-forget — we don't relay their response to the client)
-        for backend_name in self._transport.running_backends():
+        backend_names = self._transport.running_backends()
+
+        # Step 1: Initialize all backends (MCP protocol handshake)
+        for backend_name in backend_names:
             await self._transport.send_to_backend(backend_name, msg)
             logger.debug("Backend '%s' initialized", backend_name)
 
-        # Respond with MCPSec's own identity — not the backend's
+        # Step 2: Send 'initialized' notification to all backends
+        # MCP spec requires this before any tools/list or tools/call.
+        initialized_notif = MCPMessage(
+            method="notifications/initialized",
+            params={},
+            raw={},
+        )
+        for backend_name in backend_names:
+            await self._transport.send_notification_to_backend(backend_name, initialized_notif)
+
+        # Step 3: Respond to client ASAP — routing table will be built on first tools/list
         response = MCPMessage(
             id=msg.id,
             result={
-                "protocolVersion": "2025-11-25",
+                "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "mcpsec", "version": "0.1.0"},
             },
@@ -150,21 +155,33 @@ class ProxyCore:
         await self._transport.send_to_client(response)
 
     async def _handle_tools_list(self, msg: MCPMessage) -> None:
+        import asyncio
+
         assert self._transport is not None
 
-        # Aggregate tool lists from all backends
-        all_tools: list[dict[str, Any]] = []
-        for backend_name in self._transport.running_backends():
-            resp = await self._transport.send_to_backend(backend_name, msg)
-            if resp.result:
-                all_tools.extend(resp.result.get("tools", []))
+        if self._tools_cache is not None:
+            # Return cached tools — don't go to backends again
+            logger.info("tools/list returning %d cached tools", len(self._tools_cache))
+        else:
+            # First call: build routing table (which queries tools/list from all backends)
+            backend_names = self._transport.running_backends()
+            self._tools_cache = await self._router.build(self._transport, backend_names)
+            logger.info("tools/list fetched %d tools from backends", len(self._tools_cache))
 
         response = MCPMessage(
             id=msg.id,
-            result={"tools": all_tools},
+            result={"tools": self._tools_cache},
             raw={},
         )
         await self._transport.send_to_client(response)
+
+        # Start discovery AFTER first tools/list completes — both initialize
+        # and tools/list are done, so discovery won't block the client.
+        if not self._discovery_started:
+            self._discovery_started = True
+            backend_names = self._transport.running_backends()
+            self.discovery = ToolDiscovery(self._transport, backend_names, self._config)
+            asyncio.create_task(self._run_discovery())
 
     async def _handle_tools_call(self, msg: MCPMessage) -> None:
         assert self._transport is not None
@@ -224,6 +241,11 @@ class ProxyCore:
         resp_content = response.result or response.error or {}
         resp_flags = analyze_response(tool_name, resp_content)
         resp_decision = decide(resp_flags, self._config.enforcement.default_mode)
+
+        if req_flags:
+            logger.warning("REQUEST  flags=%s decision=%s tool=%s", req_flags, req_decision, tool_name)
+        if resp_flags:
+            logger.warning("RESPONSE flags=%s decision=%s tool=%s", resp_flags, resp_decision, tool_name)
 
         response_event = SessionEvent(
             timestamp=datetime.now(tz=timezone.utc),

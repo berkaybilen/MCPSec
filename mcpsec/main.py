@@ -74,6 +74,12 @@ def main() -> None:
     api_state.state.config = config
 
     async def _run() -> None:
+        import signal
+
+        loop = asyncio.get_event_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown()))
+
         tasks: list[asyncio.Task] = []  # type: ignore[type-arg]
 
         if config.api.enabled:
@@ -85,14 +91,17 @@ def main() -> None:
             )
             tasks.append(api_task)
 
+        async def _shutdown() -> None:
+            await core.stop()
+            for t in tasks:
+                t.cancel()
+
         try:
             await core.start()
         except KeyboardInterrupt:
             pass
         finally:
-            await core.stop()
-            for t in tasks:
-                t.cancel()
+            await _shutdown()
 
     try:
         asyncio.run(_run())

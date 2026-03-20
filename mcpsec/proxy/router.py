@@ -18,9 +18,11 @@ class Router:
         # backend_name -> [tool_names]
         self._backend_tools: dict[str, list[str]] = {}
 
-    async def build(self, transport: BaseTransport, backend_names: list[str]) -> None:
+    async def build(self, transport: BaseTransport, backend_names: list[str]) -> list[dict]:
+        """Build routing table and return full tool definitions for tools/list response."""
         self._table.clear()
         self._backend_tools.clear()
+        all_tool_defs: list[dict] = []
 
         for backend_name in backend_names:
             request = MCPMessage(
@@ -60,6 +62,7 @@ class Router:
                     else:
                         self._table[tool_name] = backend_name
                         tools.append(tool_name)
+                        all_tool_defs.append(tool)
 
             self._backend_tools[backend_name] = tools
 
@@ -68,6 +71,7 @@ class Router:
         logger.info(
             "Routing table built: %d tools across %d backends.", tool_count, backend_count
         )
+        return all_tool_defs
 
     def resolve(self, tool_name: str) -> str:
         backend = self._table.get(tool_name)
