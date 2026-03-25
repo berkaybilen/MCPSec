@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mcpsec-proxy": {
+      "command": "/Users/tarikerkan/Desktop/mcpsec/.venv/bin/python",
+      "args": ["-m", "mcpsec", "--config", "mcpsec-config.yaml", "--log-file", "mcpsec-test.log"],
+      "cwd": "/Users/tarikerkan/Desktop/mcpsec"
+    }
+  }
+}

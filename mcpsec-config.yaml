@@ -10,11 +10,15 @@ backends:
   - name: filesystem
     transport: stdio
     command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/berkaybilen/Desktop", "/Users/berkaybilen/Documents", "/tmp"]
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
   - name: everything
     transport: stdio
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-everything"]
+  - name: gmail
+    transport: stdio
+    command: "npx"
+    args: ["-y", "@shinzolabs/gmail-mcp"]
 
 enforcement:
   default_mode: alert
@@ -31,7 +35,7 @@ features:
   dashboard: true
 
 discovery:
-  schema_probing: true
+  schema_probing: false
   hidden_tool_detection: true
   tech_fingerprinting: true
   change_detection: true

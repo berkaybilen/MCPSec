@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import signal
 import sys
 from typing import Any
 
-from config import BackendConfig
-from proxy.base import BaseTransport, MCPMessage
+from ..config import BackendConfig
+from .base import BaseTransport, MCPMessage
 
 logger = logging.getLogger("proxy.stdio")
 
@@ -16,6 +18,7 @@ class StdioTransport(BaseTransport):
     def __init__(self, backends: list[BackendConfig]) -> None:
         self._backend_configs: dict[str, BackendConfig] = {b.name: b for b in backends}
         self._processes: dict[str, asyncio.subprocess.Process] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
 
     async def start(self) -> None:
         for backend in self._backend_configs.values():
@@ -32,13 +35,32 @@ class StdioTransport(BaseTransport):
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
             )
             self._processes[backend.name] = proc
+            if backend.name not in self._locks:
+                self._locks[backend.name] = asyncio.Lock()
             logger.info("Backend '%s' spawned (pid=%s).", backend.name, proc.pid)
+            # Log stderr in background so we can see why backends crash
+            asyncio.create_task(self._drain_stderr(backend.name, proc))
             return True
         except Exception as exc:
             logger.error("Failed to spawn backend '%s': %s", backend.name, exc)
             return False
+
+    async def _drain_stderr(self, name: str, proc: asyncio.subprocess.Process) -> None:
+        """Read and log stderr from a backend process."""
+        assert proc.stderr is not None
+        try:
+            while True:
+                line = await proc.stderr.readline()
+                if not line:
+                    break
+                text = line.decode(errors="replace").rstrip()
+                if text:
+                    logger.warning("stderr[%s]: %s", name, text)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # BaseTransport implementation
@@ -58,6 +80,15 @@ class StdioTransport(BaseTransport):
         sys.stdout.flush()
 
     async def send_to_backend(self, backend_name: str, msg: MCPMessage) -> MCPMessage:
+        lock = self._locks.get(backend_name)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[backend_name] = lock
+
+        async with lock:
+            return await self._send_to_backend_unlocked(backend_name, msg)
+
+    async def _send_to_backend_unlocked(self, backend_name: str, msg: MCPMessage) -> MCPMessage:
         proc = self._processes.get(backend_name)
         if proc is None or proc.returncode is not None:
             # Try to respawn
@@ -97,7 +128,18 @@ class StdioTransport(BaseTransport):
                         "backend[%s] sent server request '%s' id=%s; acknowledging inline",
                         backend_name, incoming.method, incoming.id,
                     )
-                    ack = json.dumps({"jsonrpc": "2.0", "id": incoming.id, "result": {}}) + "\n"
+                    # Provide proper responses for known server-initiated requests
+                    if incoming.method == "roots/list":
+                        cfg = self._backend_configs.get(backend_name)
+                        roots = []
+                        if cfg:
+                            for arg in cfg.args:
+                                if arg.startswith("/"):
+                                    roots.append({"uri": f"file://{arg}", "name": arg})
+                        result = {"roots": roots}
+                    else:
+                        result = {}
+                    ack = json.dumps({"jsonrpc": "2.0", "id": incoming.id, "result": result}) + "\n"
                     proc.stdin.write(ack.encode())
                     await proc.stdin.drain()
                     continue
@@ -147,12 +189,14 @@ class StdioTransport(BaseTransport):
                 continue
             logger.info("Terminating backend '%s' (pid=%s).", name, proc.pid)
             try:
-                proc.terminate()
+                os.killpg(proc.pid, signal.SIGTERM)
                 await asyncio.wait_for(proc.wait(), timeout=5.0)
             except asyncio.TimeoutError:
                 logger.warning("Backend '%s' did not exit; killing.", name)
-                proc.kill()
+                os.killpg(proc.pid, signal.SIGKILL)
                 await proc.wait()
+            except ProcessLookupError:
+                pass
         self._processes.clear()
 
     # ------------------------------------------------------------------

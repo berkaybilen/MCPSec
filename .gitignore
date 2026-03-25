@@ -23,3 +23,6 @@ mcpsec/storage/results/
 
 .env
 .env.*
+
+docs/tarik.txt
+docs/roadmap.md
