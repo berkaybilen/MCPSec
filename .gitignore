@@ -12,6 +12,9 @@ build/
 
 .claude/
 
+task-documents/
+task documents/
+
 *.log
 logs/
 
