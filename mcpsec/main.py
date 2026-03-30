@@ -48,7 +48,7 @@ def main() -> None:
     logger = logging.getLogger("main")
 
     # Load config
-    from config import load_config  # noqa: PLC0415
+    from .config import load_config  # noqa: PLC0415
 
     try:
         config = load_config(args.config)
@@ -61,12 +61,12 @@ def main() -> None:
 
     logger.info("MCPSec starting... (transport=%s)", config.proxy.transport)
 
-    from proxy.core import ProxyCore  # noqa: PLC0415
+    from .proxy.core import ProxyCore  # noqa: PLC0415
 
     core = ProxyCore(config)
 
     # Populate shared API state
-    import api.state as api_state  # noqa: PLC0415
+    from .api import state as api_state  # noqa: PLC0415
 
     api_state.state.proxy = core
     api_state.state.router = core.router
@@ -74,10 +74,16 @@ def main() -> None:
     api_state.state.config = config
 
     async def _run() -> None:
+        import signal
+
+        loop = asyncio.get_event_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown()))
+
         tasks: list[asyncio.Task] = []  # type: ignore[type-arg]
 
         if config.api.enabled:
-            from api.server import create_app, start_api_server  # noqa: PLC0415
+            from .api.server import create_app, start_api_server  # noqa: PLC0415
 
             app = create_app()
             api_task = asyncio.create_task(
@@ -85,14 +91,17 @@ def main() -> None:
             )
             tasks.append(api_task)
 
+        async def _shutdown() -> None:
+            await core.stop()
+            for t in tasks:
+                t.cancel()
+
         try:
             await core.start()
         except KeyboardInterrupt:
             pass
         finally:
-            await core.stop()
-            for t in tasks:
-                t.cancel()
+            await _shutdown()
 
     try:
         asyncio.run(_run())

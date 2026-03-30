@@ -6,12 +6,14 @@ import traceback
 from datetime import datetime, timezone
 from typing import Any
 
-from config import MCPSecConfig
-from discovery.discovery import ToolDiscovery
-from proxy.base import MCPMessage
-from proxy.router import Router, ToolNotFoundError
-from proxy.session import Session, SessionEvent, SessionManager
-from proxy.stdio_transport import StdioTransport
+from ..analysis.regex_filter import analyze_request, analyze_response
+from ..config import MCPSecConfig
+from ..discovery.discovery import ToolDiscovery
+from ..enforcement.engine import decide
+from .base import MCPMessage
+from .router import Router, ToolNotFoundError
+from .session import Session, SessionEvent, SessionManager
+from .stdio_transport import StdioTransport
 
 logger = logging.getLogger("proxy.core")
 
@@ -25,6 +27,8 @@ class ProxyCore:
         self._running = False
         self._current_session: Session | None = None
         self.discovery: ToolDiscovery | None = None
+        self._discovery_started = False
+        self._tools_cache: list[dict[str, Any]] | None = None
 
     @property
     def is_running(self) -> bool:
@@ -43,23 +47,9 @@ class ProxyCore:
         self._transport = StdioTransport(self._config.backends)
         await self._transport.start()
 
-        backend_names = self._transport.running_backends()
-        if backend_names:
-            await self._router.build(self._transport, backend_names)
-        else:
-            logger.warning("No backends available; routing table is empty.")
-
-        # Tool discovery
-        self.discovery = ToolDiscovery(self._transport, backend_names, self._config)
-        try:
-            discovery_result = await self.discovery.run()
-            logger.info(
-                "Discovery complete: %d backends processed.",
-                len(discovery_result.get("backends", {})),
-            )
-        except Exception as exc:
-            logger.error("Tool discovery failed (non-fatal): %s", exc)
-
+        # Routing table and discovery are deferred until after initialize
+        # handshake. MCP protocol requires initialize before any other
+        # request — Gmail MCP enforces this strictly.
         self._running = True
         await self._message_loop()
 
@@ -68,6 +58,16 @@ class ProxyCore:
         self._running = False
         if self._transport:
             await self._transport.close()
+
+    async def _run_discovery(self) -> None:
+        try:
+            discovery_result = await self.discovery.run()
+            logger.info(
+                "Discovery complete: %d backends processed.",
+                len(discovery_result.get("backends", {})),
+            )
+        except Exception as exc:
+            logger.error("Tool discovery failed (non-fatal): %s", exc)
 
     async def _message_loop(self) -> None:
         assert self._transport is not None
@@ -125,16 +125,28 @@ class ProxyCore:
         self._current_session = session
         logger.info("Session created: %s", session.session_id)
 
-        # Initialize all backends (fire-and-forget — we don't relay their response to the client)
-        for backend_name in self._transport.running_backends():
+        backend_names = self._transport.running_backends()
+
+        # Step 1: Initialize all backends (MCP protocol handshake)
+        for backend_name in backend_names:
             await self._transport.send_to_backend(backend_name, msg)
             logger.debug("Backend '%s' initialized", backend_name)
 
-        # Respond with MCPSec's own identity — not the backend's
+        # Step 2: Send 'initialized' notification to all backends
+        # MCP spec requires this before any tools/list or tools/call.
+        initialized_notif = MCPMessage(
+            method="notifications/initialized",
+            params={},
+            raw={},
+        )
+        for backend_name in backend_names:
+            await self._transport.send_notification_to_backend(backend_name, initialized_notif)
+
+        # Step 3: Respond to client ASAP — routing table will be built on first tools/list
         response = MCPMessage(
             id=msg.id,
             result={
-                "protocolVersion": "2025-11-25",
+                "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "mcpsec", "version": "0.1.0"},
             },
@@ -143,21 +155,33 @@ class ProxyCore:
         await self._transport.send_to_client(response)
 
     async def _handle_tools_list(self, msg: MCPMessage) -> None:
+        import asyncio
+
         assert self._transport is not None
 
-        # Aggregate tool lists from all backends
-        all_tools: list[dict[str, Any]] = []
-        for backend_name in self._transport.running_backends():
-            resp = await self._transport.send_to_backend(backend_name, msg)
-            if resp.result:
-                all_tools.extend(resp.result.get("tools", []))
+        if self._tools_cache is not None:
+            # Return cached tools — don't go to backends again
+            logger.info("tools/list returning %d cached tools", len(self._tools_cache))
+        else:
+            # First call: build routing table (which queries tools/list from all backends)
+            backend_names = self._transport.running_backends()
+            self._tools_cache = await self._router.build(self._transport, backend_names)
+            logger.info("tools/list fetched %d tools from backends", len(self._tools_cache))
 
         response = MCPMessage(
             id=msg.id,
-            result={"tools": all_tools},
+            result={"tools": self._tools_cache},
             raw={},
         )
         await self._transport.send_to_client(response)
+
+        # Start discovery AFTER first tools/list completes — both initialize
+        # and tools/list are done, so discovery won't block the client.
+        if not self._discovery_started:
+            self._discovery_started = True
+            backend_names = self._transport.running_backends()
+            self.discovery = ToolDiscovery(self._transport, backend_names, self._config)
+            asyncio.create_task(self._run_discovery())
 
     async def _handle_tools_call(self, msg: MCPMessage) -> None:
         assert self._transport is not None
@@ -198,17 +222,38 @@ class ProxyCore:
         session.add_event(request_event)
         await _broadcast_event(session.session_id, request_event)
 
-        # TODO: run analysis pipeline here (regex, chain tracking, enforcement)
+        # Request analysis
+        req_flags = analyze_request(tool_name, msg.params)
+        req_decision = decide(req_flags, self._config.enforcement.default_mode)
+        request_event.flags = req_flags
+        request_event.decision = req_decision
+
+        if req_decision == "block":
+            logger.warning("BLOCKED request: tool=%s flags=%s", tool_name, req_flags)
+            err = MCPMessage.make_error(msg.id, -32000, f"Blocked by MCPSec: {req_flags}")
+            await self._transport.send_to_client(err)
+            return
 
         # Forward to backend
         response = await self._transport.send_to_backend(backend_name, msg)
 
-        # Record response event
+        # Response analysis
+        resp_content = response.result or response.error or {}
+        resp_flags = analyze_response(tool_name, resp_content)
+        resp_decision = decide(resp_flags, self._config.enforcement.default_mode)
+
+        if req_flags:
+            logger.warning("REQUEST  flags=%s decision=%s tool=%s", req_flags, req_decision, tool_name)
+        if resp_flags:
+            logger.warning("RESPONSE flags=%s decision=%s tool=%s", resp_flags, resp_decision, tool_name)
+
         response_event = SessionEvent(
             timestamp=datetime.now(tz=timezone.utc),
             direction="response",
             tool_name=tool_name,
-            content=response.result or response.error or {},
+            content=resp_content,
+            flags=resp_flags,
+            decision=resp_decision,
         )
         session.add_event(response_event)
         await _broadcast_event(session.session_id, response_event)
@@ -244,7 +289,7 @@ class ProxyCore:
 async def _broadcast_event(session_id: str, event: SessionEvent) -> None:
     """Forward event to WebSocket broadcaster (imported lazily to avoid circular imports)."""
     try:
-        from api.websocket import broadcast_event  # noqa: PLC0415
+        from ..api.websocket import broadcast_event  # noqa: PLC0415
         await broadcast_event(session_id, event)
     except Exception:
         pass

@@ -7,10 +7,10 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from config import MCPSecConfig
-from discovery.tokenizer import tokenize
-from discovery.validator import Warning, validate_tool
-from proxy.base import BaseTransport, MCPMessage
+from ..config import MCPSecConfig
+from .tokenizer import tokenize
+from .validator import Warning, validate_tool
+from ..proxy.base import BaseTransport, MCPMessage
 
 logger = logging.getLogger("discovery")
 
@@ -299,12 +299,22 @@ class ToolDiscovery:
     # DISC-03: Schema probing
     # ------------------------------------------------------------------
 
+    _MUTATING_KEYWORDS = [
+        "send", "create", "draft", "write", "delete", "remove",
+        "update", "put", "post", "insert", "move", "copy",
+        "rename", "publish", "submit", "upload", "append",
+    ]
+
     async def _probe_tool(
         self,
         backend_name: str,
         tool_name: str,
         schema: dict,
     ) -> tuple[str, list[dict], list[str]]:
+        if any(kw in tool_name.lower() for kw in self._MUTATING_KEYWORDS):
+            logger.info("Skipping probe for '%s' (mutating tool).", tool_name)
+            return ("skipped", [], [])
+
         input_schema = schema.get("inputSchema") or {}
         properties: dict = input_schema.get("properties", {}) or {}
 
