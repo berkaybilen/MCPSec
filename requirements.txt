@@ -1,11 +1,13 @@
-# Python 3.10+ required (MCP SDK constraint)
-mcp>=1.0.0
+# Python 3.11+ required
 pydantic>=2.0
 pyyaml
-httpx
 fastapi
 uvicorn[standard]
-websockets
+
+# Optional: semantic similarity scoring in Toxic Flow analysis
+# If not installed, semantic scoring is skipped gracefully
+sentence-transformers
+
+# Development / testing
 pytest
 pytest-asyncio
-sentence-transformers

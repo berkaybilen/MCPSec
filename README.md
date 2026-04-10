@@ -1,66 +1,206 @@
 # MCPSec
 
-MCP (Model Context Protocol) sunucuları için güvenlik proxy'si. Tool call'ları ve response'ları analiz eder, şüpheli aktiviteyi tespit eder.
+MCP (Model Context Protocol) sunucuları için güvenlik proxy'si. Tool call'ları ve response'ları gerçek zamanlı analiz eder, şüpheli aktiviteyi tespit eder ve engeller.
+
+## Gereksinimler
+
+| Bileşen | Minimum Sürüm | Notlar |
+|---|---|---|
+| Python | 3.11+ | 3.9/3.10 çalışmaz |
+| Node.js | 18+ | Dashboard ve MCP backend'leri için |
+| npm | 8+ | Dashboard bağımlılıkları için |
 
 ## Kurulum
 
+### 1. Python ortamı
+
 ```bash
-python3 -m venv .venv
+cd mcpsec/
+python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r ../requirements.txt
 ```
 
-Node.js 18+ gerekli (MCP backend'leri için).
+`sentence-transformers` isteğe bağlıdır. Yüklü değilse Toxic Flow semantik benzerlik skoru atlanır, sistem yine de çalışır.
+
+### 2. Dashboard
+
+```bash
+cd dashboard/
+npm install
+```
+
+---
 
 ## Çalıştırma
 
-```bash
-python3 -m mcpsec.main --config mcpsec-config.yaml
-```
-
-Proxy + API aynı process'te başlar. API default `localhost:8080`.
-
-## Gmail MCP Kurulumu (test ortamı)
-
-Her kullanıcının bir kez yapması gerekir.
-
-### 1. Google Cloud (proje sahibi bir kez yapar)
-
-- [Google Cloud Console](https://console.cloud.google.com/) → yeni proje oluştur
-- Gmail API'yi etkinleştir
-- OAuth 2.0 Client ID oluştur → tür: "Desktop app"
-- JSON'u indir, `~/.gmail-mcp/gcp-oauth.keys.json` olarak kaydet
-
-### 2. OAuth yetkilendirme (her kullanıcı yapar)
+### Proxy + API
 
 ```bash
-# gcp-oauth.keys.json dosyasını kopyala (proje sahibinden al)
-mkdir -p ~/.gmail-mcp
-cp gcp-oauth.keys.json ~/.gmail-mcp/gcp-oauth.keys.json
-
-# yetkilendir — tarayıcı açılır, Gmail erişimine izin ver
-npx @shinzolabs/gmail-mcp auth
+cd mcpsec/
+source .venv/bin/activate
+python -m mcpsec --config ../mcpsec-config.yaml
 ```
 
-Scope'lar: `gmail.readonly` + `gmail.send` (test senaryoları için ikisi de lazım).
+Proxy `stdio` üzerinden dinler, REST API `localhost:8080` üzerinde açılır.
 
-Başarılı olursa `~/.gmail-mcp/credentials.json` oluşur.
+**Seçenekler:**
 
-### 3. Config
+```
+--config PATH         Config dosyası (default: mcpsec-config.yaml)
+--log-level LEVEL     DEBUG / INFO / WARNING / ERROR (default: INFO)
+--log-file PATH       Log dosyasına yaz (Claude Code ile kullanım için)
+--no-api              REST API'yi başlatma
+--no-backends         Backend process'lerini başlatma (API-only mod)
+```
 
-`mcpsec-config.yaml`'da Gmail backend zaten tanımlı. Ekstra bir şey yapmana gerek yok.
+### Dashboard
+
+```bash
+cd dashboard/
+npm run dev
+```
+
+Tarayıcıda `http://localhost:5173` aç.
+
+> Proxy'nin çalışıyor olması gerekir. Dashboard, API üzerinden veri çeker ve WebSocket üzerinden canlı event alır.
+
+---
+
+## Yapılandırma
+
+Ana dosya: `mcpsec-config.yaml`
+
+```yaml
+backends:
+  - name: filesystem
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+enforcement:
+  default_mode: alert      # block | alert | log
+  rules_file: rules.yaml   # Per-flag kural overrides
+
+chain_tracking:
+  enabled: true
+  normal_window_size: 10   # Son N call izlenir (NORMAL modda)
+  policies:
+    USE:
+      on_u_seen: LOG
+      on_us_seen: ALERT
+      on_complete: BLOCK   # U→S→E tamamlandığında engelle
+
+session:
+  alert_timeout_minutes: 30
+```
+
+### Enforcement kuralları (`rules.yaml`)
+
+Her flag için ayrı mod ve redact ayarı tanımlanabilir:
+
+```yaml
+- id: rule-credential-leak
+  flag: credential_leak
+  mode: alert
+  redact: true        # Değeri [REDACTED] ile maskeler
+  enabled: true
+```
+
+---
+
+## Mimari
+
+```
+Claude Code / LLM Agent
+        ↓ (stdio)
+   MCPSec Proxy
+        ↓
+  ┌─────────────────────────────┐
+  │  1. Regex Filter            │  Path traversal, SQL injection,
+  │                             │  credential leak, prompt injection
+  ├─────────────────────────────┤
+  │  2. Chain Tracker           │  U→S→E label zinciri takibi
+  │                             │  (Untrusted → Sensitive → External)
+  ├─────────────────────────────┤
+  │  3. Enforcement Engine      │  BLOCK / ALERT / LOG / redact
+  └─────────────────────────────┘
+        ↓
+  Backend MCP Servers (filesystem, gmail, vb.)
+```
+
+**Startup analizi:**
+
+```
+Tool Discovery → Toxic Flow Analyzer → Chain Tracker (label map yüklenir)
+```
+
+---
+
+## Dashboard
+
+`http://localhost:5173` adresinde 4 ekran:
+
+| Ekran | İçerik |
+|---|---|
+| **Monitor** | Canlı event akışı (WebSocket), session listesi, chain state, routing table |
+| **Threats** | Toxic Flow sonuçları — tehlikeli U→S→E path'leri, tool label'ları |
+| **Rules** | Enforcement kuralları — ekle, aç/kapat, sil |
+| **Backends** | Backend sunucu listesi, Rescan butonu |
+
+**Monitor — Event renkleri:**
+
+| Renk | Karar |
+|---|---|
+| Kırmızı | BLOCK — tool call engellendi |
+| Sarı | ALERT — şüpheli, kaydedildi |
+| Mavi | LOG — kaydedildi, geçti |
+| Gri | PASS — temiz |
+
+---
+
+## API
+
+Proxy çalışırken `http://localhost:8080` üzerinde:
+
+```
+GET  /api/sessions                        Oturumlar
+GET  /api/sessions/{id}/chain-state       Zincir takip durumu
+GET  /api/events                          Eventler (filtreli)
+GET  /api/events/stats                    Özet istatistikler
+GET  /api/routing-table                   Tool → backend eşleşmesi
+GET  /api/toxic-flow                      Toxic Flow analiz sonucu
+GET  /api/rules                           Enforcement kuralları
+POST /api/rules                           Kural ekle
+PUT  /api/rules/{id}                      Kural güncelle
+DELETE /api/rules/{id}                    Kural sil
+GET  /api/backends                        Backend listesi
+POST /api/rescan                          Yeniden tara
+WS   /ws/events                           Canlı event stream
+```
+
+---
 
 ## Test
 
-`test-mcp-config.json` dosyasındaki `command` ve `cwd` alanları absolute path kullanır. Klonladıktan sonra kendi path'inize göre güncelleyin:
-
-```json
-"command": "/PROJE/YOLU/.venv/bin/python",
-"cwd": "/PROJE/YOLU"
+```bash
+cd mcpsec/
+PYTHONPATH=. .venv/bin/python3 tests/runner.py --scenario PI-001
 ```
+
+---
+
+## Gmail MCP (isteğe bağlı)
+
+Gmail backend'ini kullanmak için OAuth kurulumu:
 
 ```bash
-python tests/runner.py --scenario PI-001
+# 1. Google Cloud Console'dan OAuth credentials indir
+mkdir -p ~/.gmail-mcp
+cp gcp-oauth.keys.json ~/.gmail-mcp/
+
+# 2. Yetkilendir (tarayıcı açılır)
+npx @shinzolabs/gmail-mcp auth
 ```
 
-Detaylar: [docs/roadmap.md](docs/roadmap.md)
+`~/.gmail-mcp/credentials.json` oluştuktan sonra `mcpsec-config.yaml`'daki gmail backend aktif olur.
