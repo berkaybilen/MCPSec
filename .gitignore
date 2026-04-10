@@ -16,6 +16,10 @@ build/
 # Local-only documents (thesis, dev notes, usage guides)
 local/
 
+# Dashboard build artifacts
+dashboard/node_modules/
+dashboard/dist/
+
 # Task planning documents (local only)
 task-documents/
 task documents/
