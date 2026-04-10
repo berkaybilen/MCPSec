@@ -10,8 +10,13 @@ __pycache__/
 dist/
 build/
 
+# Claude Code settings (local only)
 .claude/
 
+# Local-only documents (thesis, dev notes, usage guides)
+local/
+
+# Task planning documents (local only)
 task-documents/
 task documents/
 
@@ -19,6 +24,7 @@ task documents/
 logs/
 
 mcpsec/storage/results/
+mcpsec/storage/mcpsec.db
 
 .DS_Store
 .vscode/
@@ -29,3 +35,5 @@ mcpsec/storage/results/
 
 docs/tarik.txt
 docs/roadmap.md
+
+test-mcp-config.json
