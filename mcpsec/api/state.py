@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from analysis.toxic_flow import ToxicFlowAnalyzer
     from config import MCPSecConfig
     from discovery.discovery import ToolDiscovery
     from proxy.core import ProxyCore
@@ -16,6 +17,7 @@ class AppState:
     sessions: "SessionManager | None" = None
     config: "MCPSecConfig | None" = None
     discovery: "ToolDiscovery | None" = None
+    toxic_flow: "ToxicFlowAnalyzer | None" = None
 
 
 state = AppState()

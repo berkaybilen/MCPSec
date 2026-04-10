@@ -69,7 +69,7 @@ class StdioTransport(BaseTransport):
     async def receive_message(self) -> MCPMessage:
         loop = asyncio.get_event_loop()
         line = await loop.run_in_executor(None, sys.stdin.readline)
-        if not line:
+        if not line or not line.strip():
             raise EOFError("Client closed stdin.")
         data: dict[str, Any] = json.loads(line.strip())
         return MCPMessage.from_dict(data)

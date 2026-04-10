@@ -11,6 +11,6 @@ router = APIRouter(prefix="/api")
 
 @router.get("/routing-table")
 async def get_routing_table() -> dict[str, Any]:
-    if state.router is None:
-        return {}
-    return state.router.get_all_tools()
+    from ...storage.repository import EventRepository  # noqa: PLC0415
+    repo = EventRepository()
+    return repo.get_routing_table()

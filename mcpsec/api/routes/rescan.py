@@ -34,9 +34,22 @@ async def _rescan_task() -> None:
 
         # Re-run tool discovery
         if proxy.discovery is not None:
-            await proxy.discovery.rescan()
+            new_discovery_result = await proxy.discovery.rescan()
             state.discovery = proxy.discovery
-            logger.info("Rescan complete. Routing table + discovery rebuilt.")
+
+            # Re-run toxic flow analysis with fresh discovery data
+            if proxy.toxic_flow is not None and new_discovery_result:
+                try:
+                    tf_result = proxy.toxic_flow.run(new_discovery_result)
+                    state.toxic_flow = proxy.toxic_flow
+                    logger.info(
+                        "Toxic flow re-analysis complete. Severity: %s",
+                        tf_result.get("session_severity", "unknown"),
+                    )
+                except Exception as tf_exc:
+                    logger.error("Toxic flow re-analysis failed: %s", tf_exc)
+
+            logger.info("Rescan complete. Routing table + discovery + toxic flow rebuilt.")
         else:
             logger.info("Rescan complete. Routing table rebuilt (no discovery instance).")
     except Exception as exc:

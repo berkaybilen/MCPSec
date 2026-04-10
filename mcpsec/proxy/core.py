@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import traceback
@@ -10,6 +11,7 @@ from ..analysis.regex_filter import analyze_request, analyze_response
 from ..config import MCPSecConfig
 from ..discovery.discovery import ToolDiscovery
 from ..enforcement.engine import decide
+from ..storage.repository import EventRepository
 from .base import MCPMessage
 from .router import Router, ToolNotFoundError
 from .session import Session, SessionEvent, SessionManager
@@ -19,8 +21,9 @@ logger = logging.getLogger("proxy.core")
 
 
 class ProxyCore:
-    def __init__(self, config: MCPSecConfig) -> None:
+    def __init__(self, config: MCPSecConfig, no_backends: bool = False) -> None:
         self._config = config
+        self._no_backends = no_backends
         self._session_manager = SessionManager()
         self._router = Router()
         self._transport: StdioTransport | None = None
@@ -29,6 +32,8 @@ class ProxyCore:
         self.discovery: ToolDiscovery | None = None
         self._discovery_started = False
         self._tools_cache: list[dict[str, Any]] | None = None
+        self.toxic_flow: Any | None = None  # ToxicFlowAnalyzer, set after discovery
+        self._repo = EventRepository()
 
     @property
     def is_running(self) -> bool:
@@ -44,14 +49,20 @@ class ProxyCore:
 
     async def start(self) -> None:
         logger.info("ProxyCore starting...")
-        self._transport = StdioTransport(self._config.backends)
+        backends = [] if self._no_backends else self._config.backends
+        self._transport = StdioTransport(backends)
         await self._transport.start()
 
         # Routing table and discovery are deferred until after initialize
         # handshake. MCP protocol requires initialize before any other
         # request — Gmail MCP enforces this strictly.
         self._running = True
-        await self._message_loop()
+        if not self._no_backends:
+            await self._message_loop()
+        else:
+            # API-only mode: no message loop, just keep alive until stopped
+            while self._running:
+                await asyncio.sleep(1)
 
     async def stop(self) -> None:
         logger.info("ProxyCore stopping...")
@@ -60,6 +71,7 @@ class ProxyCore:
             await self._transport.close()
 
     async def _run_discovery(self) -> None:
+        discovery_result: dict = {}
         try:
             discovery_result = await self.discovery.run()
             logger.info(
@@ -68,6 +80,24 @@ class ProxyCore:
             )
         except Exception as exc:
             logger.error("Tool discovery failed (non-fatal): %s", exc)
+
+        # Toxic flow analysis — runs after discovery completes
+        if discovery_result:
+            try:
+                from ..analysis.toxic_flow import ToxicFlowAnalyzer  # noqa: PLC0415
+                self.toxic_flow = ToxicFlowAnalyzer(
+                    self._config.toxic_flow,
+                    self._config.toxic_flow.result_path,
+                )
+                tf_result = self.toxic_flow.run(discovery_result)
+                logger.info(
+                    "Toxic flow analysis complete. Session severity: %s",
+                    tf_result["session_severity"],
+                )
+            except ImportError:
+                logger.debug("ToxicFlowAnalyzer not yet available, skipping.")
+            except Exception as exc:
+                logger.error("Toxic flow analysis failed (non-fatal): %s", exc)
 
     async def _message_loop(self) -> None:
         assert self._transport is not None
@@ -124,6 +154,7 @@ class ProxyCore:
         session = self._session_manager.create_session()
         self._current_session = session
         logger.info("Session created: %s", session.session_id)
+        self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, 0)
 
         backend_names = self._transport.running_backends()
 
@@ -167,6 +198,7 @@ class ProxyCore:
             backend_names = self._transport.running_backends()
             self._tools_cache = await self._router.build(self._transport, backend_names)
             logger.info("tools/list fetched %d tools from backends", len(self._tools_cache))
+            self._repo.save_routing_table(self._router.get_routing_table())
 
         response = MCPMessage(
             id=msg.id,
@@ -228,6 +260,9 @@ class ProxyCore:
         request_event.flags = req_flags
         request_event.decision = req_decision
 
+        self._repo.save_event(session.session_id, request_event.to_dict())
+        self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, len(session.events))
+
         if req_decision == "block":
             logger.warning("BLOCKED request: tool=%s flags=%s", tool_name, req_flags)
             err = MCPMessage.make_error(msg.id, -32000, f"Blocked by MCPSec: {req_flags}")
@@ -257,6 +292,8 @@ class ProxyCore:
         )
         session.add_event(response_event)
         await _broadcast_event(session.session_id, response_event)
+        self._repo.save_event(session.session_id, response_event.to_dict())
+        self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, len(session.events))
 
         await self._transport.send_to_client(response)
 
