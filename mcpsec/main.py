@@ -82,6 +82,8 @@ def main() -> None:
     api_state.state.router = core.router
     api_state.state.sessions = core.session_manager
     api_state.state.config = config
+    # chain_tracker and toxic_flow are set on core after discovery runs;
+    # state references core directly so they're accessible via state.proxy.chain_tracker
 
     async def _run() -> None:
         import signal

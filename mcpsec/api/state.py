@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from analysis.chain_tracker import ChainTracker
     from analysis.toxic_flow import ToxicFlowAnalyzer
     from config import MCPSecConfig
     from discovery.discovery import ToolDiscovery
@@ -18,6 +19,7 @@ class AppState:
     config: "MCPSecConfig | None" = None
     discovery: "ToolDiscovery | None" = None
     toxic_flow: "ToxicFlowAnalyzer | None" = None
+    chain_tracker: "ChainTracker | None" = None
 
 
 state = AppState()

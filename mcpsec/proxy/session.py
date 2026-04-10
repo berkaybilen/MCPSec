@@ -39,6 +39,7 @@ class Session:
         self.state: SessionState = SessionState.NORMAL
         self.alert_triggered_at: datetime | None = None
         self.events: list[SessionEvent] = []
+        self.tool_sequence: list[Any] = []  # list[ToolSequenceEntry], typed in chain_tracker
 
     def add_event(self, event: SessionEvent) -> None:
         self.events.append(event)

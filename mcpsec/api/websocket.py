@@ -36,6 +36,13 @@ async def broadcast_event(session_id: str, event: SessionEvent) -> None:
 
     payload: dict[str, Any] = event.to_dict()
     payload["session_id"] = session_id
+    payload["type"] = "tool_event"
+    await broadcast_raw(payload)
+
+
+async def broadcast_raw(payload: dict[str, Any]) -> None:
+    if not _connections:
+        return
 
     dead: set[WebSocket] = set()
     for ws in list(_connections):

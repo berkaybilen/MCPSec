@@ -33,6 +33,7 @@ class ProxyCore:
         self._discovery_started = False
         self._tools_cache: list[dict[str, Any]] | None = None
         self.toxic_flow: Any | None = None  # ToxicFlowAnalyzer, set after discovery
+        self.chain_tracker: Any | None = None  # ChainTracker, set after toxic flow
         self._repo = EventRepository()
 
     @property
@@ -98,6 +99,18 @@ class ProxyCore:
                 logger.debug("ToxicFlowAnalyzer not yet available, skipping.")
             except Exception as exc:
                 logger.error("Toxic flow analysis failed (non-fatal): %s", exc)
+
+        # Chain tracking — runs after toxic flow (needs label map from result)
+        if self._config.chain_tracking.enabled:
+            try:
+                from ..analysis.chain_tracker import ChainTracker  # noqa: PLC0415
+                self.chain_tracker = ChainTracker(
+                    self._config.chain_tracking,
+                    self._config.chain_tracking.result_path,
+                )
+                logger.info("ChainTracker initialized.")
+            except Exception as exc:
+                logger.error("ChainTracker init failed (non-fatal): %s", exc)
 
     async def _message_loop(self) -> None:
         assert self._transport is not None
@@ -254,7 +267,7 @@ class ProxyCore:
         session.add_event(request_event)
         await _broadcast_event(session.session_id, request_event)
 
-        # Request analysis
+        # Request analysis — regex filter
         req_flags = analyze_request(tool_name, msg.params)
         req_decision = decide(req_flags, self._config.enforcement.default_mode)
         request_event.flags = req_flags
@@ -268,6 +281,37 @@ class ProxyCore:
             err = MCPMessage.make_error(msg.id, -32000, f"Blocked by MCPSec: {req_flags}")
             await self._transport.send_to_client(err)
             return
+
+        # Chain tracking — runs after regex filter
+        if self.chain_tracker is not None:
+            event_id = len(session.events)
+            ct_result = self.chain_tracker.check(session, tool_name, event_id, backend_name)
+            if ct_result.matched_combination:
+                logger.warning(
+                    "Chain tracking: combination=%s step=%s decision=%s tool=%s",
+                    ct_result.matched_combination,
+                    ct_result.step,
+                    ct_result.decision,
+                    tool_name,
+                )
+                request_event.flags = list(request_event.flags) + [
+                    f"chain:{ct_result.matched_combination}:{ct_result.step}"
+                ]
+                if ct_result.decision in ("ALERT", "BLOCK"):
+                    await _broadcast_chain_event(session.session_id, tool_name, ct_result)
+            if ct_result.decision == "BLOCK":
+                combo = ct_result.matched_combination or "unknown"
+                step = ct_result.step or "?"
+                err = MCPMessage.make_error(
+                    msg.id,
+                    -32600,
+                    f"MCPSec: Tool call blocked — dangerous chain detected ({combo}, step {step}). "
+                    f"Tool '{tool_name}' continues a {combo} chain.",
+                )
+                request_event.decision = "block"
+                self._repo.save_event(session.session_id, request_event.to_dict())
+                await self._transport.send_to_client(err)
+                return
 
         # Forward to backend
         response = await self._transport.send_to_backend(backend_name, msg)
@@ -328,5 +372,26 @@ async def _broadcast_event(session_id: str, event: SessionEvent) -> None:
     try:
         from ..api.websocket import broadcast_event  # noqa: PLC0415
         await broadcast_event(session_id, event)
+    except Exception:
+        pass
+
+
+async def _broadcast_chain_event(session_id: str, tool_name: str, ct_result: Any) -> None:
+    """Broadcast chain tracking alert/block over WebSocket."""
+    try:
+        from ..api.websocket import broadcast_raw  # noqa: PLC0415
+        event_type = (
+            "chain_tracking_block" if ct_result.decision == "BLOCK" else "chain_tracking_alert"
+        )
+        await broadcast_raw({
+            "type": event_type,
+            "session_id": session_id,
+            "decision": ct_result.decision,
+            "matched_combination": ct_result.matched_combination,
+            "step": ct_result.step,
+            "tool": tool_name,
+            "context": ct_result.context,
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        })
     except Exception:
         pass

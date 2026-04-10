@@ -69,3 +69,27 @@ toxic_flow:
 
   recommendations:
     engine: "template"
+
+chain_tracking:
+  enabled: true
+  normal_window_size: 10
+  alert_timeout_minutes: null
+  data_flow_tracking: false
+  result_path: "storage/results/toxic_flow_result.json"
+
+  policies:
+    USE:
+      on_u_seen: LOG
+      on_us_seen: ALERT
+      on_complete: BLOCK
+    SE:
+      on_first: LOG
+      on_complete: BLOCK
+    US:
+      on_first: LOG
+      on_complete: ALERT
+    UE:
+      on_first: LOG
+      on_complete: ALERT
+
+  default_policy: LOG
