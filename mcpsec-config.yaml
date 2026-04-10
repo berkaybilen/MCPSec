@@ -40,3 +40,32 @@ discovery:
   tech_fingerprinting: true
   change_detection: true
   probing_timeout_ms: 5000
+
+toxic_flow:
+  enabled: true
+  result_path: "storage/results/toxic_flow_result.json"
+
+  thresholds:
+    u: 5
+    s: 4
+    e: 4
+
+  suppressor_multiplier: 0.5
+  compound_bonus: 4
+
+  semantic:
+    enabled: true
+    model: "all-MiniLM-L6-v2"
+    confirm_threshold: 0.75
+    support_threshold: 0.55
+    contradict_threshold: 0.35
+    borderline_window: 1
+
+  confidence_bands:
+    very_high: 0.85
+    high: 0.70
+    medium: 0.50
+    low: 0.35
+
+  recommendations:
+    engine: "template"

@@ -51,6 +51,30 @@ class DiscoveryConfig(BaseModel):
     probing_timeout_ms: int = 5000
 
 
+class ToxicFlowThresholds(BaseModel):
+    u: int = 5
+    s: int = 4
+    e: int = 4
+
+
+class ToxicFlowSemanticConfig(BaseModel):
+    enabled: bool = True
+    model: str = "all-MiniLM-L6-v2"
+    confirm_threshold: float = 0.75
+    support_threshold: float = 0.55
+    contradict_threshold: float = 0.35
+    borderline_window: int = 1
+
+
+class ToxicFlowConfig(BaseModel):
+    enabled: bool = True
+    result_path: str = "storage/results/toxic_flow_result.json"
+    thresholds: ToxicFlowThresholds = Field(default_factory=ToxicFlowThresholds)
+    suppressor_multiplier: float = 0.5
+    compound_bonus: int = 4
+    semantic: ToxicFlowSemanticConfig = Field(default_factory=ToxicFlowSemanticConfig)
+
+
 class MCPSecConfig(BaseModel):
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
@@ -59,6 +83,7 @@ class MCPSecConfig(BaseModel):
     session: SessionConfig = Field(default_factory=SessionConfig)
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
     discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
+    toxic_flow: ToxicFlowConfig = Field(default_factory=ToxicFlowConfig)
 
 
 def load_config(path: str) -> MCPSecConfig:

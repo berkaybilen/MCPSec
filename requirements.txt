@@ -8,3 +8,4 @@ uvicorn[standard]
 websockets
 pytest
 pytest-asyncio
+sentence-transformers
