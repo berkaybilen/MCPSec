@@ -339,18 +339,16 @@ class ChainTracker:
         e_tool = info.get("e_entry")
 
         for path in self._dangerous_paths:
-            path_labels: list[str] = path.get("labels", [])
-            path_tools: list[str] = path.get("tools", [])
+            path_tools: list[str] = path.get("chain", [])
             if not path_tools:
                 continue
-            # Match by tool names involved in the combination
             active_tools = {
                 t.tool
                 for t in [u_tool, s_tool, e_tool]
                 if t is not None
             }
             if active_tools and active_tools.issubset(set(path_tools)):
-                ctx["toxic_flow_path"] = path.get("path_id")
+                ctx["toxic_flow_path"] = path.get("id")
                 ctx["toxic_flow_severity"] = path.get("severity")
                 ctx["toxic_flow_recommendation"] = path.get("recommendation")
                 break

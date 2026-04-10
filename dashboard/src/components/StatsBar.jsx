@@ -12,11 +12,11 @@ function Stat({ label, value, color = 'text-gray-100' }) {
 export default function StatsBar({ stats }) {
   return (
     <div className="flex items-center bg-gray-900 border-b border-gray-800 flex-shrink-0">
-      <Stat label="Sessions" value={stats?.total_sessions} />
-      <Stat label="Events" value={stats?.total_events} />
-      <Stat label="Alerts" value={stats?.alert_count} color="text-yellow-400" />
-      <Stat label="Blocks" value={stats?.block_count} color="text-red-400" />
-      <Stat label="Credential Leaks" value={stats?.credential_leak_count} color="text-orange-400" />
+      <Stat label="Sessions" value={stats?.sessions_total} />
+      <Stat label="Events" value={stats?.events_total} />
+      <Stat label="Flagged" value={stats?.flagged_events} color="text-orange-400" />
+      <Stat label="Alerts" value={stats?.alerted} color="text-yellow-400" />
+      <Stat label="Blocks" value={stats?.blocked} color="text-red-400" />
     </div>
   )
 }

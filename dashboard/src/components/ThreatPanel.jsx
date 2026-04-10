@@ -53,6 +53,8 @@ function ConfidenceBar({ score }) {
 
 function DangerousPathCard({ path }) {
   const [open, setOpen] = useState(false)
+  const labels = path.chain_labels ?? []
+  const tools = path.chain ?? []
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
       <button
@@ -61,15 +63,15 @@ function DangerousPathCard({ path }) {
       >
         <SeverityBadge severity={path.severity} />
         <div className="flex gap-1 items-center">
-          {path.labels?.map((l, i) => (
+          {labels.map((l, i) => (
             <span key={i} className="flex items-center gap-1">
               <LabelBadge label={l} />
-              {i < path.labels.length - 1 && <span className="text-gray-600 text-xs">→</span>}
+              {i < labels.length - 1 && <span className="text-gray-600 text-xs">→</span>}
             </span>
           ))}
         </div>
         <span className="ml-2 text-gray-300 text-sm flex-1 truncate">
-          {path.tools?.join(' → ')}
+          {tools.join(' → ')}
         </span>
         <svg
           className={`w-4 h-4 text-gray-500 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
@@ -81,7 +83,7 @@ function DangerousPathCard({ path }) {
       {open && (
         <div className="px-4 pb-4 border-t border-gray-800 space-y-3 pt-3">
           <div className="flex flex-wrap gap-2">
-            {path.tools?.map((tool) => (
+            {tools.map((tool) => (
               <span key={tool} className="mono text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded">
                 {tool}
               </span>
