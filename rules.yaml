@@ -1,0 +1,27 @@
+- id: rule-path-traversal
+  name: Path Traversal Block
+  flag: path_traversal
+  mode: block
+  redact: false
+  enabled: true
+
+- id: rule-sql-injection
+  name: SQL Injection Block
+  flag: sql_injection
+  mode: block
+  redact: false
+  enabled: true
+
+- id: rule-injection-detected
+  name: Prompt Injection Alert
+  flag: injection_detected
+  mode: alert
+  redact: false
+  enabled: true
+
+- id: rule-credential-leak
+  name: Credential Leak Redact
+  flag: credential_leak
+  mode: alert
+  redact: true
+  enabled: true

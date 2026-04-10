@@ -7,7 +7,7 @@ import traceback
 from datetime import datetime, timezone
 from typing import Any
 
-from ..analysis.regex_filter import analyze_request, analyze_response
+from ..analysis.regex_filter import analyze_request, analyze_response, redact_credentials
 from ..config import MCPSecConfig
 from ..discovery.discovery import ToolDiscovery
 from ..enforcement.engine import decide
@@ -269,14 +269,19 @@ class ProxyCore:
 
         # Request analysis — regex filter
         req_flags = analyze_request(tool_name, msg.params)
-        req_decision = decide(req_flags, self._config.enforcement.default_mode)
+        req_result = decide(
+            req_flags,
+            self._config.enforcement.default_mode,
+            rules_file=self._config.enforcement.rules_file,
+            session_state=session.state.value,
+        )
         request_event.flags = req_flags
-        request_event.decision = req_decision
+        request_event.decision = req_result.decision
 
         self._repo.save_event(session.session_id, request_event.to_dict())
         self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, len(session.events))
 
-        if req_decision == "block":
+        if req_result.is_blocking:
             logger.warning("BLOCKED request: tool=%s flags=%s", tool_name, req_flags)
             err = MCPMessage.make_error(msg.id, -32000, f"Blocked by MCPSec: {req_flags}")
             await self._transport.send_to_client(err)
@@ -319,12 +324,35 @@ class ProxyCore:
         # Response analysis
         resp_content = response.result or response.error or {}
         resp_flags = analyze_response(tool_name, resp_content)
-        resp_decision = decide(resp_flags, self._config.enforcement.default_mode)
+        resp_result = decide(
+            resp_flags,
+            self._config.enforcement.default_mode,
+            rules_file=self._config.enforcement.rules_file,
+            session_state=session.state.value,
+        )
+
+        # Session ALERT transition on injection_detected in response
+        if "injection_detected" in resp_flags and session.state.value == "NORMAL":
+            session.transition_to_alert()
+            logger.warning("Session transitioned to ALERT: injection_detected in response of tool=%s", tool_name)
+
+        # Redact credentials from response before forwarding to client
+        if resp_result.redact:
+            resp_content = redact_credentials(resp_content)
+            if response.result is not None:
+                response = MCPMessage(
+                    id=response.id,
+                    method=response.method,
+                    result=resp_content,
+                    error=response.error,
+                    raw=response.raw,
+                )
+            logger.info("Redacted credentials in response: tool=%s", tool_name)
 
         if req_flags:
-            logger.warning("REQUEST  flags=%s decision=%s tool=%s", req_flags, req_decision, tool_name)
+            logger.warning("REQUEST  flags=%s decision=%s tool=%s", req_flags, req_result.decision, tool_name)
         if resp_flags:
-            logger.warning("RESPONSE flags=%s decision=%s tool=%s", resp_flags, resp_decision, tool_name)
+            logger.warning("RESPONSE flags=%s decision=%s redact=%s tool=%s", resp_flags, resp_result.decision, resp_result.redact, tool_name)
 
         response_event = SessionEvent(
             timestamp=datetime.now(tz=timezone.utc),
@@ -332,7 +360,7 @@ class ProxyCore:
             tool_name=tool_name,
             content=resp_content,
             flags=resp_flags,
-            decision=resp_decision,
+            decision=resp_result.decision,
         )
         session.add_event(response_event)
         await _broadcast_event(session.session_id, response_event)
