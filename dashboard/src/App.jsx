@@ -9,6 +9,7 @@ import RoutingTable from './components/RoutingTable'
 import ThreatPanel from './components/ThreatPanel'
 import RulesPanel from './components/RulesPanel'
 import BackendsPanel from './components/BackendsPanel'
+import AnomalyPanel from './components/AnomalyPanel'
 import { fetchSessions, fetchStats } from './api'
 import { createWebSocket } from './ws'
 
@@ -133,6 +134,7 @@ export default function App() {
           {page === 'threats' && <ThreatPanel />}
           {page === 'rules' && <RulesPanel />}
           {page === 'backends' && <BackendsPanel onRescan={refresh} />}
+          {page === 'anomaly' && <AnomalyPanel />}
         </main>
       </div>
     </div>

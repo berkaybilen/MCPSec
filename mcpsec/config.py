@@ -107,6 +107,24 @@ class ChainTrackingConfig(BaseModel):
     result_path: str = "storage/results/toxic_flow_result.json"
 
 
+class AnomalyFrequencyConfig(BaseModel):
+    enabled: bool = True
+    max_per_minute: int = 30
+    max_per_hour: int = 500
+
+
+class AnomalyOffHoursConfig(BaseModel):
+    enabled: bool = True
+    start_hour: int = 0   # inclusive, 0–23
+    end_hour: int = 6     # exclusive, 0–23
+
+
+class AnomalyDetectionConfig(BaseModel):
+    enabled: bool = True
+    frequency: AnomalyFrequencyConfig = Field(default_factory=AnomalyFrequencyConfig)
+    off_hours: AnomalyOffHoursConfig = Field(default_factory=AnomalyOffHoursConfig)
+
+
 class MCPSecConfig(BaseModel):
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
@@ -117,6 +135,7 @@ class MCPSecConfig(BaseModel):
     discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
     toxic_flow: ToxicFlowConfig = Field(default_factory=ToxicFlowConfig)
     chain_tracking: ChainTrackingConfig = Field(default_factory=ChainTrackingConfig)
+    anomaly_detection: AnomalyDetectionConfig = Field(default_factory=AnomalyDetectionConfig)
 
 
 def load_config(path: str) -> MCPSecConfig:

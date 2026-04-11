@@ -34,6 +34,7 @@ class ProxyCore:
         self._tools_cache: list[dict[str, Any]] | None = None
         self.toxic_flow: Any | None = None  # ToxicFlowAnalyzer, set after discovery
         self.chain_tracker: Any | None = None  # ChainTracker, set after toxic flow
+        self.anomaly_detector: Any | None = None  # AnomalyDetector, initialized at startup
         self._repo = EventRepository()
 
     @property
@@ -111,6 +112,15 @@ class ProxyCore:
                 logger.info("ChainTracker initialized.")
             except Exception as exc:
                 logger.error("ChainTracker init failed (non-fatal): %s", exc)
+
+        # Anomaly detection — global, session-independent frequency + off-hours
+        if self._config.anomaly_detection.enabled:
+            try:
+                from ..analysis.anomaly_detector import AnomalyDetector  # noqa: PLC0415
+                self.anomaly_detector = AnomalyDetector(self._config.anomaly_detection)
+                logger.info("AnomalyDetector initialized.")
+            except Exception as exc:
+                logger.error("AnomalyDetector init failed (non-fatal): %s", exc)
 
     async def _message_loop(self) -> None:
         assert self._transport is not None
@@ -317,6 +327,34 @@ class ProxyCore:
                 self._repo.save_event(session.session_id, request_event.to_dict())
                 await self._transport.send_to_client(err)
                 return
+
+        # Anomaly detection — frequency + off-hours (global, session-independent)
+        if self.anomaly_detector is not None:
+            anomaly_flags = self.anomaly_detector.check()
+            if anomaly_flags:
+                anomaly_result = decide(
+                    anomaly_flags,
+                    self._config.enforcement.default_mode,
+                    rules_file=self._config.enforcement.rules_file,
+                    session_state=session.state.value,
+                )
+                logger.warning(
+                    "Anomaly detected: flags=%s decision=%s tool=%s",
+                    anomaly_flags,
+                    anomaly_result.decision,
+                    tool_name,
+                )
+                request_event.flags = list(request_event.flags) + anomaly_flags
+                if anomaly_result.is_blocking:
+                    request_event.decision = "block"
+                    self._repo.save_event(session.session_id, request_event.to_dict())
+                    err = MCPMessage.make_error(
+                        msg.id,
+                        -32000,
+                        f"Blocked by MCPSec: anomaly detected ({anomaly_flags})",
+                    )
+                    await self._transport.send_to_client(err)
+                    return
 
         # Forward to backend
         response = await self._transport.send_to_backend(backend_name, msg)

@@ -20,6 +20,8 @@ INJECTION_PATTERNS = [
 # Request patterns — suspicious tool arguments
 PATH_TRAVERSAL = re.compile(r"\.\./|\.\.\\|/etc/passwd|/etc/shadow|~\/\.ssh|~\/\.env")
 SQL_INJECTION = re.compile(r"('\s*(OR|AND)\s+'|;\s*(DROP|DELETE|UPDATE|INSERT)\s+|UNION\s+SELECT)", re.IGNORECASE)
+SENSITIVE_PATH = re.compile(r"/root/|/proc/|/sys/|~/\.aws/|~/\.config/|/var/log/|\.pem$|\.key$", re.IGNORECASE)
+DANGEROUS_SQL = re.compile(r"\b(GRANT|REVOKE|ALTER\s+(TABLE|DATABASE)|TRUNCATE|EXEC(UTE)?)\b", re.IGNORECASE)
 
 # Response patterns — credential leaks
 CREDENTIAL_PATTERNS = [
@@ -87,6 +89,10 @@ def analyze_request(tool_name: str, params: dict[str, Any]) -> list[str]:
         flags.append("path_traversal")
     if SQL_INJECTION.search(text):
         flags.append("sql_injection")
+    if SENSITIVE_PATH.search(text):
+        flags.append("sensitive_path")
+    if DANGEROUS_SQL.search(text):
+        flags.append("dangerous_sql")
     return flags
 
 

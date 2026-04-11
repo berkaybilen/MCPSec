@@ -93,3 +93,14 @@ chain_tracking:
       on_complete: ALERT
 
   default_policy: LOG
+
+anomaly_detection:
+  enabled: true
+  frequency:
+    enabled: true
+    max_per_minute: 30
+    max_per_hour: 500
+  off_hours:
+    enabled: true
+    start_hour: 0    # midnight
+    end_hour: 6      # 6am (exclusive)

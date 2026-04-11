@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .routes import (
     analysis,
+    anomaly_config,
     backends,
     config,
     events,
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
     app.include_router(rules.router)
     app.include_router(features.router)
     app.include_router(rescan.router)
+    app.include_router(anomaly_config.router)
     app.include_router(ws_router)
 
     return app

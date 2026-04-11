@@ -1,5 +1,6 @@
 from . import (  # noqa: F401
     analysis,
+    anomaly_config,
     backends,
     config,
     events,

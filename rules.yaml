@@ -25,3 +25,31 @@
   mode: alert
   redact: true
   enabled: true
+
+- id: rule-sensitive-path
+  name: Sensitive Path Access
+  flag: sensitive_path
+  mode: alert
+  redact: false
+  enabled: true
+
+- id: rule-dangerous-sql
+  name: Dangerous SQL Command
+  flag: dangerous_sql
+  mode: alert
+  redact: false
+  enabled: true
+
+- id: rule-high-frequency
+  name: High Frequency Calls
+  flag: high_frequency
+  mode: alert
+  redact: false
+  enabled: true
+
+- id: rule-off-hours-access
+  name: Off-Hours Access
+  flag: off_hours_access
+  mode: log
+  redact: false
+  enabled: true
