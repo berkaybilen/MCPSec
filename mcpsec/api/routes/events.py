@@ -4,8 +4,6 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
-from ..state import state
-
 router = APIRouter(prefix="/api")
 
 
@@ -14,23 +12,24 @@ async def get_events(
     session_id: str | None = Query(default=None),
     tool_name: str | None = Query(default=None),
     decision: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1),
+    flags_contain: str | None = Query(default=None, description="e.g. injection_detected"),
+    since: str | None = Query(default=None, description="ISO timestamp lower bound"),
+    limit: int = Query(default=200, ge=1, le=1000),
 ) -> list[dict[str, Any]]:
-    if state.sessions is None:
-        return []
+    from ...storage.repository import EventRepository  # noqa: PLC0415
+    repo = EventRepository()
+    return repo.get_events(
+        session_id=session_id,
+        tool_name=tool_name,
+        decision=decision,
+        flags_contain=flags_contain,
+        since=since,
+        limit=limit,
+    )
 
-    results: list[dict[str, Any]] = []
-    for session in state.sessions.get_all_sessions():
-        if session_id and session.session_id != session_id:
-            continue
-        for event in session.events:
-            if tool_name and event.tool_name != tool_name:
-                continue
-            if decision and event.decision != decision:
-                continue
-            entry = event.to_dict()
-            entry["session_id"] = session.session_id
-            results.append(entry)
 
-    results.sort(key=lambda e: e["timestamp"], reverse=True)
-    return results[:limit]
+@router.get("/events/stats")
+async def get_event_stats() -> dict[str, Any]:
+    from ...storage.repository import EventRepository  # noqa: PLC0415
+    repo = EventRepository()
+    return repo.get_stats()

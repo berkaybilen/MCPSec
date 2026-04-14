@@ -40,6 +40,46 @@ def _text_from_content(content: Any) -> str:
     return str(content)
 
 
+def _redact_text(text: str) -> str:
+    """Replace credential values in a plain string with [REDACTED]."""
+    # Pattern 1: key=value or key: value style — redact the value part
+    result = re.sub(
+        r"((api[_-]?key|secret[_-]?key|password|token)\s*[:=]\s*)\S+",
+        r"\1[REDACTED]",
+        text,
+        flags=re.IGNORECASE,
+    )
+    # Pattern 2: well-known token prefixes — redact the whole token
+    result = re.sub(
+        r"(sk-|pk-|ghp_|gho_|AIza)[A-Za-z0-9_\-]{10,}",
+        "[REDACTED]",
+        result,
+    )
+    return result
+
+
+def redact_credentials(content: Any) -> Any:
+    """
+    Recursively mask credential values in tool response content.
+    Returns a new object with secrets replaced by [REDACTED].
+    """
+    if isinstance(content, str):
+        return _redact_text(content)
+    if isinstance(content, dict):
+        if "content" in content and isinstance(content["content"], list):
+            new_items = []
+            for item in content["content"]:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    new_items.append({**item, "text": _redact_text(item.get("text", ""))})
+                else:
+                    new_items.append(item)
+            return {**content, "content": new_items}
+        return {k: redact_credentials(v) for k, v in content.items()}
+    if isinstance(content, list):
+        return [redact_credentials(item) for item in content]
+    return content
+
+
 def analyze_request(tool_name: str, params: dict[str, Any]) -> list[str]:
     flags: list[str] = []
     text = str(params)

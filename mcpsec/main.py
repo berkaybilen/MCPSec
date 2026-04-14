@@ -42,6 +42,16 @@ def main() -> None:
         default=None,
         help="Write logs to this file instead of stderr (required when spawned by Claude Code)",
     )
+    parser.add_argument(
+        "--no-api",
+        action="store_true",
+        help="Disable REST API server (use when spawned as subprocess alongside a standalone instance)",
+    )
+    parser.add_argument(
+        "--no-backends",
+        action="store_true",
+        help="Do not spawn backend MCP processes (use for standalone API-only mode)",
+    )
     args = parser.parse_args()
 
     _setup_logging(args.log_level, args.log_file)
@@ -59,11 +69,11 @@ def main() -> None:
         print(f"ERROR: Invalid config: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    logger.info("MCPSec starting... (transport=%s)", config.proxy.transport)
+    logger.info("MCPSec starting... (transport=%s, no_backends=%s)", config.proxy.transport, args.no_backends)
 
     from .proxy.core import ProxyCore  # noqa: PLC0415
 
-    core = ProxyCore(config)
+    core = ProxyCore(config, no_backends=args.no_backends)
 
     # Populate shared API state
     from .api import state as api_state  # noqa: PLC0415
@@ -72,6 +82,8 @@ def main() -> None:
     api_state.state.router = core.router
     api_state.state.sessions = core.session_manager
     api_state.state.config = config
+    # chain_tracker and toxic_flow are set on core after discovery runs;
+    # state references core directly so they're accessible via state.proxy.chain_tracker
 
     async def _run() -> None:
         import signal
@@ -82,7 +94,7 @@ def main() -> None:
 
         tasks: list[asyncio.Task] = []  # type: ignore[type-arg]
 
-        if config.api.enabled:
+        if config.api.enabled and not args.no_api:
             from .api.server import create_app, start_api_server  # noqa: PLC0415
 
             app = create_app()
@@ -95,6 +107,8 @@ def main() -> None:
             await core.stop()
             for t in tasks:
                 t.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
         try:
             await core.start()
