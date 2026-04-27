@@ -19,7 +19,7 @@ LOG_FILE = ROOT / "mcpsec-demo.log"
 SCENARIOS_DIR = ROOT / "tests" / "scenarios"
 
 
-def cleanup_artifacts() -> None:
+def reset_runtime_state() -> None:
     for path in (DB_PATH, DISCOVERY_RESULT, TOXIC_FLOW_RESULT, LOG_FILE):
         if path.exists():
             path.unlink()
@@ -46,10 +46,14 @@ def _send_notification(process: subprocess.Popen[str], payload: dict[str, Any]) 
     process.stdin.flush()
 
 
-def wait_for_analysis(timeout: float = 5.0) -> None:
+def wait_for_analysis(previous_mtime: float | None = None, timeout: float = 5.0) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
         if TOXIC_FLOW_RESULT.exists():
+            current_mtime = TOXIC_FLOW_RESULT.stat().st_mtime
+            if previous_mtime is not None and current_mtime <= previous_mtime:
+                time.sleep(0.1)
+                continue
             with TOXIC_FLOW_RESULT.open() as f:
                 data = json.load(f)
             if data.get("tools"):
@@ -68,6 +72,17 @@ def read_latest_session() -> dict[str, Any]:
     if row is None:
         raise RuntimeError("No session rows were written.")
     return dict(row)
+
+
+def read_sessions(limit: int = 100) -> list[dict[str, Any]]:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT * FROM sessions ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 
 def read_events(session_id: str) -> list[dict[str, Any]]:
@@ -99,7 +114,9 @@ def list_demo_scenarios() -> list[Path]:
 
 def run_scenario(path: Path) -> dict[str, Any]:
     spec = load_scenario(path)
-    cleanup_artifacts()
+    previous_analysis_mtime = (
+        TOXIC_FLOW_RESULT.stat().st_mtime if TOXIC_FLOW_RESULT.exists() else None
+    )
 
     process = subprocess.Popen(
         [
@@ -156,7 +173,7 @@ def run_scenario(path: Path) -> dict[str, Any]:
             },
         )
         responses.append(tool_list)
-        wait_for_analysis()
+        wait_for_analysis(previous_analysis_mtime)
 
         next_id = 10
         for step in spec.get("steps", []):

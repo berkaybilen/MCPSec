@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from datetime import datetime, timezone
 from typing import Any
@@ -11,6 +12,17 @@ from typing import Any
 from .db import get_connection, init_db
 
 logger = logging.getLogger("storage.repository")
+
+
+def _decorate_session_row(row: dict[str, Any]) -> dict[str, Any]:
+    decision = row.pop("max_decision", None)
+    display_state = row["state"]
+    if decision == "block":
+        display_state = "BLOCK"
+    elif decision == "alert" or row["state"] == "ALERT":
+        display_state = "ALERT"
+    row["display_state"] = display_state
+    return row
 
 
 class EventRepository:
@@ -79,13 +91,49 @@ class EventRepository:
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         conn = get_connection()
-        query = "SELECT * FROM sessions"
+        query = """
+            SELECT
+                sessions.*,
+                (
+                    SELECT CASE
+                        WHEN SUM(CASE WHEN events.decision = 'block' THEN 1 ELSE 0 END) > 0 THEN 'block'
+                        WHEN SUM(CASE WHEN events.decision = 'alert' THEN 1 ELSE 0 END) > 0 THEN 'alert'
+                        ELSE NULL
+                    END
+                    FROM events
+                    WHERE events.session_id = sessions.session_id
+                ) AS max_decision
+            FROM sessions
+        """
         if not include_closed:
             query += " WHERE ended_at IS NULL"
         query += " ORDER BY created_at DESC LIMIT ?"
         rows = conn.execute(query, (limit,)).fetchall()
         conn.close()
-        return [dict(r) for r in rows]
+        return [_decorate_session_row(dict(r)) for r in rows]
+
+    def get_session(self, session_id: str) -> dict[str, Any] | None:
+        conn = get_connection()
+        row = conn.execute(
+            """
+            SELECT
+                sessions.*,
+                (
+                    SELECT CASE
+                        WHEN SUM(CASE WHEN events.decision = 'block' THEN 1 ELSE 0 END) > 0 THEN 'block'
+                        WHEN SUM(CASE WHEN events.decision = 'alert' THEN 1 ELSE 0 END) > 0 THEN 'alert'
+                        ELSE NULL
+                    END
+                    FROM events
+                    WHERE events.session_id = sessions.session_id
+                ) AS max_decision
+            FROM sessions
+            WHERE session_id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+        conn.close()
+        return _decorate_session_row(dict(row)) if row is not None else None
 
     def get_events(
         self,
@@ -182,4 +230,31 @@ class EventRepository:
             "flagged_events": flagged,
             "blocked":        blocked,
             "alerted":        alerted,
+        }
+
+    def clear_runtime_state(self) -> dict[str, int]:
+        results_dir = os.path.join(os.path.dirname(__file__), "results")
+        removed_files = 0
+
+        with self._lock:
+            conn = get_connection()
+            with conn:
+                deleted_events = conn.execute("DELETE FROM events").rowcount
+                deleted_sessions = conn.execute("DELETE FROM sessions").rowcount
+                conn.execute("DELETE FROM routing_table")
+                conn.execute(
+                    "DELETE FROM sqlite_sequence WHERE name IN ('events')"
+                )
+            conn.close()
+
+            for filename in ("discovery_result.json", "toxic_flow_result.json"):
+                path = os.path.join(results_dir, filename)
+                if os.path.exists(path):
+                    os.remove(path)
+                    removed_files += 1
+
+        return {
+            "deleted_sessions": deleted_sessions,
+            "deleted_events": deleted_events,
+            "removed_result_files": removed_files,
         }

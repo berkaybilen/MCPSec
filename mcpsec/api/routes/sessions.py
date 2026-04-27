@@ -5,6 +5,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from ..state import state
+from ...analysis.chain_tracker import ChainTracker, reconstruct_chain_state
+from ...storage.repository import EventRepository
 
 router = APIRouter(prefix="/api")
 
@@ -14,19 +16,34 @@ async def get_sessions(
     include_closed: bool = Query(default=True),
     limit: int = Query(default=100, ge=1),
 ) -> list[dict[str, Any]]:
-    from ...storage.repository import EventRepository  # noqa: PLC0415
     repo = EventRepository()
     return repo.get_sessions(include_closed=include_closed, limit=limit)
 
 
 @router.get("/sessions/{session_id}/chain-state")
 async def get_chain_state(session_id: str) -> dict[str, Any]:
-    proxy = state.proxy
-    if proxy is None or proxy.chain_tracker is None:
-        raise HTTPException(status_code=503, detail="Chain tracker not initialized.")
-
-    session = proxy.session_manager.get_session(session_id)
+    repo = EventRepository()
+    session = repo.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found.")
 
-    return proxy.chain_tracker.get_chain_state(session)
+    events = repo.get_events(session_id=session_id, limit=1000)
+    routing = repo.get_routing_table().get("tool_to_backend", {})
+
+    if state.config is None:
+        raise HTTPException(status_code=503, detail="Config not loaded.")
+
+    tracker = state.proxy.chain_tracker if state.proxy is not None else None
+    if tracker is None:
+        tracker = ChainTracker(
+            state.config.chain_tracking,
+            state.config.chain_tracking.result_path,
+        )
+
+    return reconstruct_chain_state(
+        tracker,
+        session_id=session_id,
+        session_state=session["state"],
+        events=list(reversed(events)),
+        routing_table=routing,
+    )

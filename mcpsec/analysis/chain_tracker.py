@@ -408,3 +408,51 @@ class ChainTracker:
             "data_flow_tracking": self._config.data_flow_tracking,
             "alert_timeout_minutes": self._config.alert_timeout_minutes,
         }
+
+
+def reconstruct_chain_state(
+    tracker: ChainTracker,
+    *,
+    session_id: str,
+    session_state: str,
+    events: list[dict[str, Any]],
+    routing_table: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    from ..proxy.session import SessionState  # noqa: PLC0415
+
+    @dataclass
+    class PersistedSessionView:
+        session_id: str
+        state: SessionState
+        alert_triggered_at: datetime | None
+        tool_sequence: list[ToolSequenceEntry]
+
+    tool_sequence: list[ToolSequenceEntry] = []
+    for index, event in enumerate(events, start=1):
+        if event.get("direction") != "request":
+            continue
+        tool_name = event.get("tool_name", "")
+        timestamp = event.get("timestamp")
+        backend_name = (routing_table or {}).get(tool_name, "persisted")
+        tool_sequence.append(
+            ToolSequenceEntry(
+                tool=tool_name,
+                labels=tracker.get_labels(tool_name),
+                timestamp=datetime.fromisoformat(timestamp),
+                event_id=index,
+                backend=backend_name,
+            )
+        )
+
+    try:
+        normalized_state = SessionState(session_state)
+    except ValueError:
+        normalized_state = SessionState.NORMAL
+
+    session = PersistedSessionView(
+        session_id=session_id,
+        state=normalized_state,
+        alert_triggered_at=None,
+        tool_sequence=tool_sequence,
+    )
+    return tracker.get_chain_state(session)

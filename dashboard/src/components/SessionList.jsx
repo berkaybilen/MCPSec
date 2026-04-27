@@ -1,5 +1,6 @@
 function StateBadge({ state }) {
   const styles = {
+    BLOCK: 'bg-red-900 text-red-300 border border-red-700',
     ALERT: 'bg-yellow-900 text-yellow-300 border border-yellow-700',
     NORMAL: 'bg-green-900 text-green-300 border border-green-800',
   }[state] ?? 'bg-gray-800 text-gray-400'
@@ -35,6 +36,7 @@ export default function SessionList({ sessions, selectedSession, onSelect }) {
     <ul>
       {sessions.map((session) => {
         const isSelected = session.session_id === selectedSession
+        const badgeState = session.display_state ?? session.state
         return (
           <li
             key={session.session_id}
@@ -44,7 +46,7 @@ export default function SessionList({ sessions, selectedSession, onSelect }) {
             }`}
           >
             <div className="flex items-center justify-between mb-1">
-              <StateBadge state={session.state} />
+              <StateBadge state={badgeState} />
               <span className="text-xs text-gray-600">{timeAgo(session.created_at)}</span>
             </div>
             <p className="mono text-gray-400 truncate text-xs">{session.session_id}</p>

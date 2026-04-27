@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tests.harness import list_demo_scenarios, run_scenario
+from tests.harness import reset_runtime_state
 from tests.scenario_assertions import assert_scenario_result
 
 
@@ -24,12 +25,20 @@ def _match_scenarios(selector: str | None) -> list[Path]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run local MCPSec demo scenarios")
     parser.add_argument("scenario", nargs="?", help="Scenario prefix, e.g. DEMO-001")
+    parser.add_argument(
+        "--reset-db",
+        action="store_true",
+        help="Clear stored demo runtime data before executing scenarios",
+    )
     args = parser.parse_args()
 
     scenario_paths = _match_scenarios(args.scenario)
     if not scenario_paths:
         print(f"No scenarios matched: {args.scenario}")
         sys.exit(1)
+
+    if args.reset_db:
+        reset_runtime_state()
 
     failures = 0
     for scenario_path in scenario_paths:

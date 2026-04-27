@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { fetchEvents } from '../api'
 
 const DECISION_STYLES = {
   block: 'bg-red-900 text-red-300 border-red-700',
@@ -88,15 +89,74 @@ function EventRow({ event }) {
 
 const FILTER_OPTIONS = ['all', 'block', 'alert', 'log', 'pass']
 
-export default function EventFeed({ liveEvents, selectedSession }) {
-  const [filter, setFilter] = useState('all')
+function eventKey(event) {
+  return event.id
+    ? `db:${event.id}`
+    : [
+        event.session_id,
+        event.timestamp,
+        event.direction,
+        event.tool_name || event.type,
+        event.decision,
+        (event.flags || []).join(','),
+      ].join('|')
+}
 
-  const events = selectedSession
+export default function EventFeed({ liveEvents, selectedSession, refreshToken }) {
+  const [filter, setFilter] = useState('all')
+  const [persistedEvents, setPersistedEvents] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    let active = true
+
+    async function load() {
+      setLoading(true)
+      setError(null)
+      try {
+        const events = await fetchEvents(
+          selectedSession ? { session_id: selectedSession, limit: 1000 } : { limit: 200 }
+        )
+        if (active) {
+          setPersistedEvents(events)
+        }
+      } catch (e) {
+        if (active) {
+          setError(e.message)
+        }
+      } finally {
+        if (active) {
+          setLoading(false)
+        }
+      }
+    }
+
+    load()
+    return () => {
+      active = false
+    }
+  }, [selectedSession, refreshToken])
+
+  const matchingLiveEvents = selectedSession
     ? liveEvents.filter((e) => e.session_id === selectedSession)
     : liveEvents
 
-  const filtered =
-    filter === 'all' ? events : events.filter((e) => e.decision === filter || e.type?.includes(filter))
+  const events = useMemo(() => {
+    const merged = []
+    const seen = new Set()
+    for (const event of [...matchingLiveEvents, ...persistedEvents]) {
+      const key = eventKey(event)
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(event)
+    }
+    return merged
+  }, [matchingLiveEvents, persistedEvents])
+
+  const filtered = filter === 'all'
+    ? events
+    : events.filter((e) => e.decision === filter || e.type?.includes(filter))
 
   return (
     <div className="flex flex-col h-full">
@@ -123,15 +183,27 @@ export default function EventFeed({ liveEvents, selectedSession }) {
 
       {/* Event list */}
       <div className="flex-1 overflow-y-auto">
-        {filtered.length === 0 ? (
+        {error && (
+          <div className="p-8 text-center text-red-500 text-sm">
+            {error}
+          </div>
+        )}
+        {!error && loading && events.length === 0 && (
           <div className="p-8 text-center text-gray-600 text-sm">
-            {liveEvents.length === 0
-              ? 'Waiting for events… Make tool calls through the proxy.'
+            Loading events…
+          </div>
+        )}
+        {!error && !loading && filtered.length === 0 ? (
+          <div className="p-8 text-center text-gray-600 text-sm">
+            {events.length === 0
+              ? selectedSession
+                ? 'No persisted events for the selected session yet.'
+                : 'No persisted events yet. Run a demo scenario or use the proxy.'
               : 'No events match the current filter.'}
           </div>
         ) : (
           filtered.map((event, i) => (
-            <EventRow key={`${event.session_id}-${event.timestamp}-${i}`} event={event} />
+            <EventRow key={eventKey(event) || `${event.session_id}-${event.timestamp}-${i}`} event={event} />
           ))
         )}
       </div>
