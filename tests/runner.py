@@ -1,105 +1,62 @@
 #!/usr/bin/env python3
-"""MCPSec test runner — runs security scenarios and verifies detection."""
 
 from __future__ import annotations
 
 import argparse
-import glob
-import re
-import subprocess
 import sys
 from pathlib import Path
 
-import yaml
-
 ROOT = Path(__file__).resolve().parent.parent
-LOG_FILE = ROOT / "mcpsec-test.log"
-SCENARIOS_DIR = Path(__file__).resolve().parent / "scenarios"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-FLAG_PATTERN = re.compile(
-    r"(REQUEST|RESPONSE)\s+flags=\[([^\]]*)\]\s+decision=(\w+)\s+tool=(\S+)"
-)
-
-
-def find_scenario(scenario_id: str) -> Path:
-    matches = glob.glob(str(SCENARIOS_DIR / f"{scenario_id}*.yaml"))
-    if not matches:
-        print(f"Scenario not found: {scenario_id}")
-        sys.exit(1)
-    return Path(matches[0])
+from tests.harness import list_demo_scenarios, run_scenario
+from tests.scenario_assertions import assert_scenario_result
 
 
-def parse_flags_from_log() -> list[dict]:
-    if not LOG_FILE.exists():
-        return []
-    results = []
-    for line in LOG_FILE.read_text().splitlines():
-        m = FLAG_PATTERN.search(line)
-        if m:
-            flags = [f.strip().strip("'\"") for f in m.group(2).split(",") if f.strip()]
-            results.append({
-                "direction": m.group(1).lower(),
-                "flags": flags,
-                "decision": m.group(3),
-                "tool": m.group(4),
-            })
-    return results
-
-
-def run_scenario(scenario_path: Path) -> bool:
-    spec = yaml.safe_load(scenario_path.read_text())
-
-    LOG_FILE.write_text("")
-
-    # TODO: Gmail MCP opens its own HTTP server on port 3000. If a previous
-    # run's process is still alive, the new one crashes with EADDRINUSE.
-    # This is a workaround — proper fix is preventing zombie processes upstream.
-    subprocess.run("lsof -ti :3000 | xargs kill 2>/dev/null", shell=True)
-
-    mcp_config = ROOT / spec.get("mcp_config", "test-mcp-config.json")
-    cmd = [
-        "claude",
-        "-p", spec["prompt"],
-        "--mcp-config", str(mcp_config),
-        "--output-format", "json",
-        "--max-turns", str(spec.get("max_turns", 25)),
-    ]
-
-    timeout = spec.get("timeout", 120)
-    try:
-        subprocess.run(cmd, cwd=str(ROOT), timeout=timeout, capture_output=True)
-    except subprocess.TimeoutExpired:
-        print(f"  TIMEOUT after {timeout}s")
-        return False
-
-    detections = parse_flags_from_log()
-    found_flags = set()
-    for d in detections:
-        found_flags.update(d["flags"])
-
-    expected_flags = set(spec.get("expect", {}).get("flags", []))
-    passed = expected_flags.issubset(found_flags)
-
-    status = "PASS" if passed else "FAIL"
-    print(f"{spec['id']} {spec['name']} ... {status}")
-    print(f"  expected: {', '.join(sorted(expected_flags))}")
-    if detections:
-        for d in detections:
-            print(f"  found:    {', '.join(d['flags'])} (decision={d['decision']}, tool={d['tool']})")
-    else:
-        print("  found:    (none)")
-
-    return passed
+def _match_scenarios(selector: str | None) -> list[Path]:
+    scenarios = list_demo_scenarios()
+    if selector is None:
+        return scenarios
+    return [path for path in scenarios if path.stem.startswith(selector)]
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="MCPSec security test runner")
-    parser.add_argument("scenario", help="Scenario ID (e.g. PI-001)")
+    parser = argparse.ArgumentParser(description="Run local MCPSec demo scenarios")
+    parser.add_argument("scenario", nargs="?", help="Scenario prefix, e.g. DEMO-001")
     args = parser.parse_args()
 
-    scenario_path = find_scenario(args.scenario)
-    passed = run_scenario(scenario_path)
-    sys.exit(0 if passed else 1)
+    scenario_paths = _match_scenarios(args.scenario)
+    if not scenario_paths:
+        print(f"No scenarios matched: {args.scenario}")
+        sys.exit(1)
+
+    failures = 0
+    for scenario_path in scenario_paths:
+        result = run_scenario(scenario_path)
+        spec = result["spec"]
+        session = result["session"]
+        events = result["events"]
+        try:
+            assert_scenario_result(result)
+            passed = True
+        except AssertionError as exc:
+            passed = False
+            failure_message = str(exc)
+        status = "PASS" if passed else "FAIL"
+
+        print(f"{spec['id']} {spec['name']} ... {status}")
+        print(f"  session:  {session['session_id']} state={session['state']} events={len(events)}")
+        for event in events:
+            print(
+                f"  {event['direction']:8} tool={event['tool_name']:<20} "
+                f"decision={event['decision']:<5} flags={','.join(event['flags']) or '-'}"
+            )
+        if not passed:
+            print(f"  reason:   {failure_message}")
+            failures += 1
+
+    sys.exit(1 if failures else 0)
 
 
 if __name__ == "__main__":

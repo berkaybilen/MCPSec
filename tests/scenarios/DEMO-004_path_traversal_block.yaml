@@ -1,0 +1,15 @@
+id: DEMO-004
+name: Path Traversal Request Is Blocked
+steps:
+  - tool: read_local_file
+    arguments:
+      path: "../../etc/passwd"
+    expect_response:
+      error_contains: "Blocked by MCPSec"
+expect:
+  session_state: NORMAL
+  events:
+    - tool: read_local_file
+      direction: request
+      decision: block
+      flags_include: [path_traversal]

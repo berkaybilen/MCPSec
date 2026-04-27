@@ -1,0 +1,78 @@
+proxy:
+  transport: stdio
+  port: 3001
+
+api:
+  port: 8080
+  enabled: true
+
+backends:
+  - name: demo
+    transport: stdio
+    command: "./.venv/bin/python"
+    args: ["tests/mock_mcp_server.py"]
+
+enforcement:
+  default_mode: alert
+  rules_file: rules.yaml
+
+session:
+  alert_timeout_minutes: 30
+  sliding_window_size: 10
+
+features:
+  embedding_filter: false
+  llm_evaluator: false
+  anomaly_detection: true
+  dashboard: true
+
+discovery:
+  schema_probing: false
+  hidden_tool_detection: false
+  tech_fingerprinting: false
+  change_detection: false
+  probing_timeout_ms: 1000
+
+toxic_flow:
+  enabled: true
+  result_path: "mcpsec/storage/results/toxic_flow_result.json"
+
+  thresholds:
+    u: 5
+    s: 4
+    e: 4
+
+  suppressor_multiplier: 0.5
+  compound_bonus: 4
+
+  semantic:
+    enabled: false
+    model: "all-MiniLM-L6-v2"
+    confirm_threshold: 0.75
+    support_threshold: 0.55
+    contradict_threshold: 0.35
+    borderline_window: 1
+
+chain_tracking:
+  enabled: true
+  normal_window_size: 10
+  alert_timeout_minutes: null
+  data_flow_tracking: false
+  result_path: "mcpsec/storage/results/toxic_flow_result.json"
+
+  policies:
+    USE:
+      on_u_seen: LOG
+      on_us_seen: ALERT
+      on_complete: BLOCK
+    SE:
+      on_first: LOG
+      on_complete: BLOCK
+    US:
+      on_first: LOG
+      on_complete: ALERT
+    UE:
+      on_first: LOG
+      on_complete: ALERT
+
+  default_policy: LOG

@@ -1,0 +1,14 @@
+id: DEMO-001
+name: Safe Echo Passes
+steps:
+  - tool: echo_safe
+    arguments:
+      message: "hello from local demo"
+    expect_response:
+      text_contains: "hello from local demo"
+expect:
+  session_state: NORMAL
+  events:
+    - tool: echo_safe
+      direction: response
+      decision: pass
