@@ -181,12 +181,54 @@ WS   /ws/events                           Canlı event stream
 
 ---
 
-## Test
+## Demo Testleri
+
+Taşınabilir demo testleri ek bir servis, OAuth ya da Claude CLI gerektirmez.
+Yerel bir mock MCP backend ile çalışır ve MCPSec'in request/response kontrolünü,
+redaction davranışını ve chain blocking mantığını doğrular.
+
+### Hızlı doğrulama
 
 ```bash
-cd mcpsec/
-PYTHONPATH=. .venv/bin/python3 tests/runner.py --scenario PI-001
+./.venv/bin/python -m pytest -q tests/test_demo_scenarios.py
 ```
+
+### Senaryo çıktısı ile çalıştırma
+
+```bash
+./.venv/bin/python tests/runner.py
+```
+
+Örnek senaryolar:
+
+- `DEMO-001` güvenli tool call
+- `DEMO-002` prompt injection tespiti
+- `DEMO-003` credential leak redaction
+- `DEMO-004` path traversal block
+- `DEMO-005` tehlikeli `U -> S -> E` zincirinin block edilmesi
+
+### Dashboard ile demo akışı
+
+1. Proxy + API'yi demo config ile başlat:
+
+```bash
+./.venv/bin/python -m mcpsec --config mcpsec-demo-config.yaml
+```
+
+2. Dashboard'ı aç:
+
+```bash
+cd dashboard/
+npm run dev
+```
+
+3. Başka bir terminalde bir senaryo çalıştır:
+
+```bash
+./.venv/bin/python tests/runner.py DEMO-005
+```
+
+Dashboard üzerinde yeni session'ı, event akışını ve block kararını canlı görebilirsin.
 
 ---
 
