@@ -20,6 +20,11 @@ session:
   alert_timeout_minutes: 30
   sliding_window_size: 10
 
+state_machine:
+  enabled: true
+  sanitizer_tools:
+    - sanitize_content
+
 features:
   embedding_filter: false
   llm_evaluator: false

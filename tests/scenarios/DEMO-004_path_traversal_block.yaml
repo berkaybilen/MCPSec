@@ -7,7 +7,7 @@ steps:
     expect_response:
       error_contains: "Blocked by MCPSec"
 expect:
-  session_state: NORMAL
+  session_state: SAFE
   events:
     - tool: read_local_file
       direction: request

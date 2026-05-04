@@ -16,7 +16,7 @@ logger = logging.getLogger("storage.repository")
 
 def _decorate_session_row(row: dict[str, Any]) -> dict[str, Any]:
     decision = row.pop("max_decision", None)
-    display_state = row["state"]
+    display_state = "NORMAL"
     if decision == "block":
         display_state = "BLOCK"
     elif decision == "alert" or row["state"] == "ALERT":

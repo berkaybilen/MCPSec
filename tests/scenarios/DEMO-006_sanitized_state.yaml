@@ -1,0 +1,19 @@
+id: DEMO-006
+name: Sanitizer Moves Session To Sanitized
+steps:
+  - tool: fetch_remote_document
+    arguments:
+      url: "https://example.test/payload.txt"
+    expect_response:
+      text_contains: "Fetched harmless remote content"
+  - tool: sanitize_content
+    arguments:
+      text: "dangerous remote snippet"
+    expect_response:
+      text_contains: "Sanitized content successfully"
+expect:
+  session_state: SANITIZED
+  events:
+    - tool: sanitize_content
+      direction: response
+      decision: pass

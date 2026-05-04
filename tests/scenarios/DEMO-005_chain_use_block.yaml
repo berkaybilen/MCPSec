@@ -18,11 +18,11 @@ steps:
     expect_response:
       error_contains: "dangerous chain detected"
 expect:
-  session_state: NORMAL
+  session_state: TAINTED
   events:
     - tool: read_local_file
       direction: request
-      decision: pass
+      decision: alert
     - tool: send_webhook
       direction: request
       decision: block

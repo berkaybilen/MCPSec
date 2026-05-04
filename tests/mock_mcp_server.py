@@ -62,6 +62,17 @@ TOOLS = [
         },
     },
     {
+        "name": "sanitize_content",
+        "description": "Sanitizes tainted content locally before later tool usage.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Potentially unsafe content to sanitize"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
         "name": "leak_demo_secret",
         "description": "Returns a demo secret token for redaction testing.",
         "inputSchema": {
@@ -98,6 +109,9 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return make_text_result(f"Read local file contents from {path}.")
     if name == "send_webhook":
         return make_text_result("Webhook delivered successfully.")
+    if name == "sanitize_content":
+        text = arguments.get("text", "")
+        return make_text_result(f"Sanitized content successfully: {text[:24]}")
     if name == "leak_demo_secret":
         return make_text_result("api_key=sk-DEMOSECRET1234567890")
     raise ValueError(f"Unknown tool: {name}")

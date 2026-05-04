@@ -1,12 +1,26 @@
 function StateBadge({ state }) {
   const styles = {
-    BLOCK: 'bg-red-900 text-red-300 border border-red-700',
-    ALERT: 'bg-yellow-900 text-yellow-300 border border-yellow-700',
-    NORMAL: 'bg-green-900 text-green-300 border border-green-800',
+    SAFE: 'bg-green-900 text-green-300 border border-green-800',
+    TAINTED: 'bg-orange-900 text-orange-300 border border-orange-700',
+    SANITIZED: 'bg-blue-900 text-blue-300 border border-blue-800',
   }[state] ?? 'bg-gray-800 text-gray-400'
 
   return (
     <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${styles}`}>
+      {state}
+    </span>
+  )
+}
+
+function SeverityBadge({ state }) {
+  const styles = {
+    BLOCK: 'bg-red-900 text-red-300 border border-red-700',
+    ALERT: 'bg-yellow-900 text-yellow-300 border border-yellow-700',
+    NORMAL: 'bg-gray-800 text-gray-400 border border-gray-700',
+  }[state] ?? 'bg-gray-800 text-gray-400 border border-gray-700'
+
+  return (
+    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${styles}`}>
       {state}
     </span>
   )
@@ -36,7 +50,8 @@ export default function SessionList({ sessions, selectedSession, onSelect }) {
     <ul>
       {sessions.map((session) => {
         const isSelected = session.session_id === selectedSession
-        const badgeState = session.display_state ?? session.state
+        const contextState = session.state
+        const severityState = session.display_state ?? 'NORMAL'
         return (
           <li
             key={session.session_id}
@@ -46,7 +61,10 @@ export default function SessionList({ sessions, selectedSession, onSelect }) {
             }`}
           >
             <div className="flex items-center justify-between mb-1">
-              <StateBadge state={badgeState} />
+              <div className="flex items-center gap-1.5">
+                <StateBadge state={contextState} />
+                <SeverityBadge state={severityState} />
+              </div>
               <span className="text-xs text-gray-600">{timeAgo(session.created_at)}</span>
             </div>
             <p className="mono text-gray-400 truncate text-xs">{session.session_id}</p>

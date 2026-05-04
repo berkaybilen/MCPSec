@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from ..state import state
 from ...analysis.chain_tracker import ChainTracker, reconstruct_chain_state
+from ...proxy.session import reconstruct_session_state
 from ...storage.repository import EventRepository
 
 router = APIRouter(prefix="/api")
@@ -40,10 +41,18 @@ async def get_chain_state(session_id: str) -> dict[str, Any]:
             state.config.chain_tracking.result_path,
         )
 
+    session_context = reconstruct_session_state(
+        list(reversed(events)),
+        label_getter=tracker.get_labels,
+        sanitizer_tools=state.config.state_machine.sanitizer_tools,
+    )
+
     return reconstruct_chain_state(
         tracker,
         session_id=session_id,
-        session_state=session["state"],
+        session_state=session_context["state"],
         events=list(reversed(events)),
         routing_table=routing,
-    )
+        state_changed_at=session_context["state_changed_at"],
+        last_transition_reason=session_context["last_transition_reason"],
+    ) | {"display_state": session["display_state"]}

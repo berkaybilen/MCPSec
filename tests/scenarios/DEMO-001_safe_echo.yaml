@@ -7,7 +7,7 @@ steps:
     expect_response:
       text_contains: "hello from local demo"
 expect:
-  session_state: NORMAL
+  session_state: SAFE
   events:
     - tool: echo_safe
       direction: response

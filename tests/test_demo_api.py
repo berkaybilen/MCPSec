@@ -38,6 +38,8 @@ def test_chain_state_is_available_for_persisted_sessions() -> None:
     payload = response.json()
     assert payload["session_id"] == result["session"]["session_id"]
     assert payload["current_chain_state"] == "USE_COMPLETE"
+    assert payload["session_state"] == "TAINTED"
+    assert payload["display_state"] == "BLOCK"
     assert any(combo["combination"] == "USE" for combo in payload["active_combinations"])
     assert len(payload["window_entries"]) >= 3
 
@@ -82,7 +84,32 @@ def test_sessions_endpoint_exposes_display_state_from_event_history() -> None:
     blocked_session = next(
         session for session in sessions if session["session_id"] == blocked["session"]["session_id"]
     )
-    assert blocked_session["state"] == "NORMAL"
+    assert blocked_session["state"] == "TAINTED"
     assert blocked_session["display_state"] == "BLOCK"
 
     assert any(session["display_state"] == "ALERT" for session in sessions)
+
+
+def test_sanitizer_session_is_visible_in_api() -> None:
+    sanitized = run_scenario(next(path for path in list_demo_scenarios() if path.stem.startswith("DEMO-006")))
+
+    state.config = load_config(str(DEMO_CONFIG))
+    client = TestClient(create_app())
+
+    sessions = client.get("/api/sessions").json()
+    sanitized_session = next(
+        session for session in sessions if session["session_id"] == sanitized["session"]["session_id"]
+    )
+    assert sanitized_session["state"] == "SANITIZED"
+    assert sanitized_session["display_state"] == "NORMAL"
+
+
+def test_tainted_sensitive_tool_is_escalated() -> None:
+    result = run_scenario(next(path for path in list_demo_scenarios() if path.stem.startswith("DEMO-005")))
+
+    read_local_file_request = next(
+        event
+        for event in result["events"]
+        if event["tool_name"] == "read_local_file" and event["direction"] == "request"
+    )
+    assert read_local_file_request["decision"] == "alert"
