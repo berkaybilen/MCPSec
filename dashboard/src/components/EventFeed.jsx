@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { fetchEvents } from '../api'
 
 const DECISION_STYLES = {
   block: 'bg-red-900 text-red-300 border-red-700',
@@ -90,13 +91,51 @@ const FILTER_OPTIONS = ['all', 'block', 'alert', 'log', 'pass']
 
 export default function EventFeed({ liveEvents, selectedSession }) {
   const [filter, setFilter] = useState('all')
+  const [historical, setHistorical] = useState([])
+  const [loading, setLoading] = useState(false)
 
-  const events = selectedSession
+  // Fetch historical events from the DB whenever the selection changes.
+  // liveEvents (WebSocket) only has what arrived since the dashboard opened;
+  // history fills in everything that was persisted before then.
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setLoading(true)
+      try {
+        const params = selectedSession
+          ? { session_id: selectedSession, limit: 500 }
+          : { limit: 200 }
+        const events = await fetchEvents(params)
+        if (!cancelled) setHistorical(events)
+      } catch {
+        if (!cancelled) setHistorical([])
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [selectedSession])
+
+  // Merge: live events (in-memory, may include type=chain_tracking_*) + DB history.
+  // Dedup by (session_id|timestamp|direction|tool_name) — same physical event
+  // appears in both buckets if it arrived while dashboard was open.
+  const liveFiltered = selectedSession
     ? liveEvents.filter((e) => e.session_id === selectedSession)
     : liveEvents
+  const seen = new Set()
+  const merged = [...liveFiltered, ...historical].filter((e) => {
+    const key = `${e.session_id}|${e.timestamp}|${e.direction}|${e.tool_name}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  merged.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
 
   const filtered =
-    filter === 'all' ? events : events.filter((e) => e.decision === filter || e.type?.includes(filter))
+    filter === 'all'
+      ? merged
+      : merged.filter((e) => e.decision === filter || e.type?.includes(filter))
 
   return (
     <div className="flex flex-col h-full">
@@ -125,9 +164,13 @@ export default function EventFeed({ liveEvents, selectedSession }) {
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 ? (
           <div className="p-8 text-center text-gray-600 text-sm">
-            {liveEvents.length === 0
-              ? 'Waiting for events… Make tool calls through the proxy.'
-              : 'No events match the current filter.'}
+            {loading
+              ? 'Loading events…'
+              : merged.length === 0
+                ? selectedSession
+                  ? 'No events for this session.'
+                  : 'No events yet. Make tool calls through the proxy.'
+                : 'No events match the current filter.'}
           </div>
         ) : (
           filtered.map((event, i) => (

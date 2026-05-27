@@ -52,7 +52,12 @@ def create_app() -> FastAPI:
     return app
 
 
-async def start_api_server(app: FastAPI, host: str, port: int) -> None:
+def make_api_server(app: FastAPI, host: str, port: int) -> uvicorn.Server:
+    """Build the uvicorn Server.  Caller owns the lifecycle:
+    `await server.serve()` to run, `server.should_exit = True` for graceful stop.
+    Avoids the `asyncio.CancelledError` lifespan traceback that occurs when
+    the serve task is cancelled directly.
+    """
     config_obj = uvicorn.Config(
         app,
         host=host,
@@ -62,4 +67,10 @@ async def start_api_server(app: FastAPI, host: str, port: int) -> None:
     )
     server = uvicorn.Server(config_obj)
     logger.info("API server running at http://%s:%d", host, port)
+    return server
+
+
+async def start_api_server(app: FastAPI, host: str, port: int) -> None:
+    """Backwards-compatible wrapper — prefer `make_api_server` for graceful shutdown."""
+    server = make_api_server(app, host, port)
     await server.serve()

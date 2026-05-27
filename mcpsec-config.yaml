@@ -19,6 +19,10 @@ backends:
     transport: stdio
     command: "npx"
     args: ["-y", "@shinzolabs/gmail-mcp"]
+  - name: puppeteer
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-puppeteer"] 
 
 enforcement:
   default_mode: alert
