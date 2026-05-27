@@ -19,6 +19,7 @@ local/
 # Dashboard build artifacts
 dashboard/node_modules/
 dashboard/dist/
+dashboard/.vite/
 
 # Task planning documents (local only)
 task-documents/
