@@ -1,5 +1,10 @@
 id: DEMO-006
 name: Sanitizer Moves Session To Sanitized
+description: >
+  Shows session state recovery after taint. After fetching a remote
+  document (which taints the session), calling a designated sanitizer
+  tool transitions the session from TAINTED to SANITIZED — demonstrating
+  that the state machine can recover and allow continued safe operation.
 steps:
   - tool: fetch_remote_document
     arguments:

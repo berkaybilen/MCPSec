@@ -1,5 +1,6 @@
 from . import (  # noqa: F401
     analysis,
+    anomaly_config,
     backends,
     config,
     events,
@@ -8,5 +9,6 @@ from . import (  # noqa: F401
     rescan,
     routing,
     rules,
+    scenarios,
     sessions,
 )

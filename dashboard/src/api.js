@@ -63,3 +63,11 @@ export const deleteRule = (id) => del(`/rules/${id}`)
 export const fetchBackends = () => get('/backends')
 export const triggerRescan = () => post('/rescan')
 export const resetRuntimeState = () => post('/backends/reset-runtime')
+
+// Anomaly config
+export const fetchAnomalyConfig = () => get('/anomaly-config')
+export const updateAnomalyConfig = (cfg) => put('/anomaly-config', cfg)
+
+// Scenarios
+export const fetchScenarios = () => get('/scenarios')
+export const runScenario = (id) => post(`/scenarios/${id}/run`)

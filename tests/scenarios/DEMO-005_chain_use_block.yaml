@@ -1,5 +1,11 @@
 id: DEMO-005
 name: Dangerous U-S-E Chain Is Blocked
+description: >
+  Demonstrates the U-S-E (Untrusted→Storage→Exfiltration) chain
+  detection. Step 1 fetches a remote document (U), step 2 reads a local
+  file (S — alerting because the session is already tainted), step 3
+  attempts to exfiltrate via webhook (E). MCPSec's chain tracker
+  recognises the completed dangerous pattern and blocks the final step.
 steps:
   - tool: fetch_remote_document
     arguments:

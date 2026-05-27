@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import traceback
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable, Awaitable
+
+# Per-async-task context: which send_fn to use for the current message handler.
+# Using ContextVar makes it safe for concurrent SSE clients (each asyncio Task
+# gets its own copy of the context).
+_current_send_fn: contextvars.ContextVar[
+    Callable[[Any], Awaitable[None]] | None
+] = contextvars.ContextVar("current_send_fn", default=None)
 
 from ..analysis.regex_filter import analyze_request, analyze_response, redact_credentials
 from ..config import MCPSecConfig
@@ -21,9 +29,11 @@ logger = logging.getLogger("proxy.core")
 
 
 class ProxyCore:
-    def __init__(self, config: MCPSecConfig, no_backends: bool = False) -> None:
+    def __init__(self, config: MCPSecConfig, no_backends: bool = False, standalone: bool = False, sse: bool = False) -> None:
         self._config = config
         self._no_backends = no_backends
+        self._standalone = standalone
+        self._sse = sse
         self._session_manager = SessionManager()
         self._router = Router()
         self._transport: StdioTransport | None = None
@@ -34,7 +44,40 @@ class ProxyCore:
         self._tools_cache: list[dict[str, Any]] | None = None
         self.toxic_flow: Any | None = None  # ToxicFlowAnalyzer, set after discovery
         self.chain_tracker: Any | None = None  # ChainTracker, set after toxic flow
+        self.anomaly_detector: Any | None = None  # AnomalyDetector, initialized at startup
         self._repo = EventRepository()
+        # SSE client registry: client_id -> send_fn coroutine
+        self._sse_clients: dict[str, Callable[[Any], Awaitable[None]]] = {}
+
+    # ------------------------------------------------------------------
+    # SSE client management
+    # ------------------------------------------------------------------
+
+    def register_sse_client(self, client_id: str, send_fn: Callable[[Any], Awaitable[None]]) -> None:
+        self._sse_clients[client_id] = send_fn
+
+    def unregister_sse_client(self, client_id: str) -> None:
+        self._sse_clients.pop(client_id, None)
+
+    async def handle_sse_message(self, msg: "MCPMessage", client_id: str) -> None:
+        """Process an incoming MCP message from an SSE client."""
+        send_fn = self._sse_clients.get(client_id)
+        if send_fn is None:
+            logger.warning("handle_sse_message: unknown client_id=%s", client_id)
+            return
+        token = _current_send_fn.set(send_fn)
+        try:
+            await self._handle_message(msg)
+        finally:
+            _current_send_fn.reset(token)
+
+    async def _send_to_client(self, msg: "MCPMessage") -> None:
+        """Send a response to the current MCP client (stdio or SSE)."""
+        fn = _current_send_fn.get()
+        if fn is not None:
+            await fn(msg)
+        elif self._transport is not None:
+            await self._transport.send_to_client(msg)
 
     @property
     def is_running(self) -> bool:
@@ -49,21 +92,79 @@ class ProxyCore:
         return self._session_manager
 
     async def start(self) -> None:
-        logger.info("ProxyCore starting...")
+        logger.info(
+            "ProxyCore starting... (standalone=%s, sse=%s, no_backends=%s)",
+            self._standalone, self._sse, self._no_backends,
+        )
         backends = [] if self._no_backends else self._config.backends
         self._transport = StdioTransport(backends)
         await self._transport.start()
 
-        # Routing table and discovery are deferred until after initialize
-        # handshake. MCP protocol requires initialize before any other
-        # request — Gmail MCP enforces this strictly.
         self._running = True
-        if not self._no_backends:
-            await self._message_loop()
-        else:
-            # API-only mode: no message loop, just keep alive until stopped
+        if (self._standalone or self._sse) and not self._no_backends:
+            # Standalone / SSE mode: auto-initialize backends, build routing
+            # table, run discovery, then keep alive waiting for API/SSE calls.
+            await self._standalone_init()
             while self._running:
                 await asyncio.sleep(1)
+        elif not self._no_backends:
+            # Classic stdio proxy mode: read MCP messages from stdin.
+            await self._message_loop()
+        else:
+            # API-only mode: no message loop, just keep alive until stopped.
+            while self._running:
+                await asyncio.sleep(1)
+
+    async def _standalone_init(self) -> None:
+        """Auto-initialize all backends without a MCP client on stdin."""
+        assert self._transport is not None
+        backend_names = self._transport.running_backends()
+        if not backend_names:
+            logger.warning("Standalone mode: no backends running, skipping init.")
+            return
+
+        logger.info("Standalone mode: initializing %d backends...", len(backend_names))
+        init_msg = MCPMessage(
+            id=0,
+            method="initialize",
+            params={
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "mcpsec-standalone", "version": "0.1.0"},
+            },
+            raw={},
+        )
+        for name in backend_names:
+            try:
+                await self._transport.send_to_backend(name, init_msg)
+                logger.debug("Backend '%s' initialized (standalone)", name)
+            except Exception as exc:
+                logger.warning("Failed to initialize backend '%s': %s", name, exc)
+
+        initialized_notif = MCPMessage(method="notifications/initialized", params={}, raw={})
+        for name in backend_names:
+            try:
+                await self._transport.send_notification_to_backend(name, initialized_notif)
+            except Exception as exc:
+                logger.warning("Failed to send notifications/initialized to '%s': %s", name, exc)
+
+        # Build routing table
+        try:
+            self._tools_cache = await self._router.build(self._transport, backend_names)
+            logger.info("Standalone: routing table built (%d tools)", len(self._tools_cache))
+            self._repo.save_routing_table(self._router.get_routing_table())
+        except Exception as exc:
+            logger.error("Standalone: failed to build routing table: %s", exc)
+
+        # Create a session for tracking
+        session = self._session_manager.create_session()
+        self._current_session = session
+        self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, 0)
+
+        # Run discovery + analysis pipeline
+        self.discovery = ToolDiscovery(self._transport, backend_names, self._config)
+        self._discovery_started = True
+        await self._run_discovery()
 
     async def stop(self) -> None:
         logger.info("ProxyCore stopping...")
@@ -112,6 +213,15 @@ class ProxyCore:
             except Exception as exc:
                 logger.error("ChainTracker init failed (non-fatal): %s", exc)
 
+        # Anomaly detection — global, session-independent frequency + off-hours
+        if self._config.anomaly_detection.enabled:
+            try:
+                from ..analysis.anomaly_detector import AnomalyDetector  # noqa: PLC0415
+                self.anomaly_detector = AnomalyDetector(self._config.anomaly_detection)
+                logger.info("AnomalyDetector initialized.")
+            except Exception as exc:
+                logger.error("AnomalyDetector init failed (non-fatal): %s", exc)
+
     async def _message_loop(self) -> None:
         assert self._transport is not None
         logger.debug("Message loop started. Routing table: %s", self._router.get_routing_table())
@@ -135,7 +245,7 @@ class ProxyCore:
                     "Unhandled exception processing message: %s\n%s", exc, traceback.format_exc()
                 )
                 err = MCPMessage.make_error(msg.id, -32000, f"Internal proxy error: {exc}")
-                await self._transport.send_to_client(err)
+                await self._send_to_client(err)
 
     async def _handle_message(self, msg: MCPMessage) -> None:
         assert self._transport is not None
@@ -196,7 +306,7 @@ class ProxyCore:
             },
             raw={},
         )
-        await self._transport.send_to_client(response)
+        await self._send_to_client(response)
 
     async def _handle_tools_list(self, msg: MCPMessage) -> None:
         import asyncio
@@ -218,7 +328,7 @@ class ProxyCore:
             result={"tools": self._tools_cache},
             raw={},
         )
-        await self._transport.send_to_client(response)
+        await self._send_to_client(response)
 
         # Start discovery AFTER first tools/list completes — both initialize
         # and tools/list are done, so discovery won't block the client.
@@ -234,7 +344,7 @@ class ProxyCore:
         tool_name: str = msg.params.get("name", "")
         if not tool_name:
             err = MCPMessage.make_error(msg.id, -32602, "Missing tool name in params.")
-            await self._transport.send_to_client(err)
+            await self._send_to_client(err)
             return
 
         # Resolve backend
@@ -244,7 +354,7 @@ class ProxyCore:
         except ToolNotFoundError as exc:
             logger.warning("BLOCKED tools/call: %s | routing table: %s", exc, self._router.get_routing_table())
             err = MCPMessage.make_error(msg.id, -32601, str(exc))
-            await self._transport.send_to_client(err)
+            await self._send_to_client(err)
             return
 
         # Ensure we have a session
@@ -290,7 +400,7 @@ class ProxyCore:
             self._repo.save_event(session.session_id, request_event.to_dict())
             self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, len(session.events))
             err = MCPMessage.make_error(msg.id, -32000, f"Blocked by MCPSec: {req_flags}")
-            await self._transport.send_to_client(err)
+            await self._send_to_client(err)
             return
 
         # Chain tracking — runs after regex filter
@@ -322,8 +432,37 @@ class ProxyCore:
                 request_event.decision = "block"
                 self._repo.save_event(session.session_id, request_event.to_dict())
                 self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, len(session.events))
-                await self._transport.send_to_client(err)
+                await self._send_to_client(err)
                 return
+
+        # Anomaly detection — frequency + off-hours (global, session-independent)
+        if self.anomaly_detector is not None:
+            anomaly_flags = self.anomaly_detector.check()
+            if anomaly_flags:
+                anomaly_result = decide(
+                    anomaly_flags,
+                    self._config.enforcement.default_mode,
+                    rules_file=self._config.enforcement.rules_file,
+                    session_state=session.state.value,
+                )
+                logger.warning(
+                    "Anomaly detected: flags=%s decision=%s tool=%s",
+                    anomaly_flags,
+                    anomaly_result.decision,
+                    tool_name,
+                )
+                request_event.flags = list(request_event.flags) + anomaly_flags
+                if anomaly_result.is_blocking:
+                    request_event.decision = "block"
+                    self._repo.save_event(session.session_id, request_event.to_dict())
+                    self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, len(session.events))
+                    err = MCPMessage.make_error(
+                        msg.id,
+                        -32000,
+                        f"Blocked by MCPSec: anomaly detected ({anomaly_flags})",
+                    )
+                    await self._send_to_client(err)
+                    return
 
         self._repo.save_event(session.session_id, request_event.to_dict())
         self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, len(session.events))
@@ -381,7 +520,7 @@ class ProxyCore:
         self._repo.save_event(session.session_id, response_event.to_dict())
         self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, len(session.events))
 
-        await self._transport.send_to_client(response)
+        await self._send_to_client(response)
 
     def _tool_labels(self, tool_name: str) -> list[str]:
         if self.chain_tracker is None:
@@ -407,11 +546,11 @@ class ProxyCore:
         backend_names = self._transport.running_backends()
         if not backend_names:
             err = MCPMessage.make_error(msg.id, -32000, "No backends available.")
-            await self._transport.send_to_client(err)
+            await self._send_to_client(err)
             return
 
         response = await self._transport.send_to_backend(backend_names[0], msg)
-        await self._transport.send_to_client(response)
+        await self._send_to_client(response)
 
 
 async def _broadcast_event(session_id: str, event: SessionEvent) -> None:

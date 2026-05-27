@@ -52,6 +52,19 @@ def main() -> None:
         action="store_true",
         help="Do not spawn backend MCP processes (use for standalone API-only mode)",
     )
+    parser.add_argument(
+        "--standalone",
+        action="store_true",
+        help="Run as a persistent service (no MCP client required): spawns backends, "
+             "auto-initializes them, builds routing table, runs discovery, then serves the API",
+    )
+    parser.add_argument(
+        "--sse",
+        action="store_true",
+        help="Enable MCP HTTP+SSE transport: like --standalone but also accepts MCP client "
+             "connections at GET /sse and POST /messages. Configure MCP clients with "
+             "type=sse, url=http://localhost:<api_port>/sse instead of spawning via stdio.",
+    )
     args = parser.parse_args()
 
     _setup_logging(args.log_level, args.log_file)
@@ -73,7 +86,7 @@ def main() -> None:
 
     from .proxy.core import ProxyCore  # noqa: PLC0415
 
-    core = ProxyCore(config, no_backends=args.no_backends)
+    core = ProxyCore(config, no_backends=args.no_backends, standalone=args.standalone, sse=args.sse)
 
     # Populate shared API state
     from .api import state as api_state  # noqa: PLC0415
@@ -93,20 +106,32 @@ def main() -> None:
             loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown()))
 
         tasks: list[asyncio.Task] = []  # type: ignore[type-arg]
+        api_server = None  # uvicorn.Server, set below if API is enabled
 
         if config.api.enabled and not args.no_api:
-            from .api.server import create_app, start_api_server  # noqa: PLC0415
+            from .api.server import create_app, make_api_server  # noqa: PLC0415
 
             app = create_app()
-            api_task = asyncio.create_task(
-                start_api_server(app, host="0.0.0.0", port=config.api.port)
-            )
+
+            if args.sse:
+                # Register MCP HTTP+SSE endpoints on the same FastAPI app
+                from .proxy.sse_transport import create_mcp_sse_router  # noqa: PLC0415
+                app.include_router(create_mcp_sse_router(core))
+                logger.info(
+                    "MCP SSE transport enabled: GET http://0.0.0.0:%d/sse  "
+                    "POST http://0.0.0.0:%d/messages",
+                    config.api.port, config.api.port,
+                )
+
+            api_server = make_api_server(app, host="0.0.0.0", port=config.api.port)
+            api_task = asyncio.create_task(api_server.serve())
             tasks.append(api_task)
 
         async def _shutdown() -> None:
             await core.stop()
-            for t in tasks:
-                t.cancel()
+            # Graceful uvicorn shutdown — avoids CancelledError lifespan trace.
+            if api_server is not None:
+                api_server.should_exit = True
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
 

@@ -6,7 +6,7 @@ uvicorn[standard]
 
 # Optional: semantic similarity scoring in Toxic Flow analysis
 # If not installed, semantic scoring is skipped gracefully
-sentence-transformers
+# sentence-transformers
 
 # Development / testing
 pytest

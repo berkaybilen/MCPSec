@@ -1,5 +1,10 @@
 id: DEMO-004
 name: Path Traversal Request Is Blocked
+description: >
+  Simulates a path traversal attack: a tool call requests
+  ../../etc/passwd. MCPSec detects the traversal pattern in the request
+  arguments and blocks the call before it ever reaches the backend —
+  the client receives an error and the session stays SAFE.
 steps:
   - tool: read_local_file
     arguments:
