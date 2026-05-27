@@ -7,6 +7,7 @@ import yaml
 from fastapi import APIRouter, HTTPException
 
 from ..state import state
+from ...storage.repository import EventRepository
 
 router = APIRouter(prefix="/api/backends")
 
@@ -86,3 +87,13 @@ async def delete_backend(name: str) -> dict[str, Any]:
             return {"deleted": name}
 
     raise HTTPException(status_code=404, detail=f"Backend '{name}' not found.")
+
+
+@router.post("/reset-runtime")
+async def reset_runtime_state() -> dict[str, Any]:
+    repo = EventRepository()
+    result = repo.clear_runtime_state()
+    return {
+        "status": "ok",
+        **result,
+    }

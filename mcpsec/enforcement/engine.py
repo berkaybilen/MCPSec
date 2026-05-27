@@ -101,3 +101,26 @@ def decide(
         redact=redact,
         matched_rules=matched_rule_ids,
     )
+
+
+def apply_tainted_escalation(
+    result: EnforcementResult,
+    *,
+    tool_labels: list[str],
+    session_state: str,
+) -> EnforcementResult:
+    if session_state != "TAINTED" or not any(label in ("S", "E") for label in tool_labels):
+        return result
+
+    if result.decision in ("pass", "log"):
+        decision: Literal["pass", "block", "alert", "log"] = "alert"
+    elif result.decision == "alert":
+        decision = "block"
+    else:
+        decision = result.decision
+
+    return EnforcementResult(
+        decision=decision,
+        redact=result.redact,
+        matched_rules=result.matched_rules,
+    )

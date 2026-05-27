@@ -24,6 +24,18 @@ const LABEL_STYLES = {
   E: 'bg-red-900 text-red-200',
 }
 
+const SESSION_STATE_STYLES = {
+  SAFE: 'bg-green-900 text-green-300 border border-green-800',
+  TAINTED: 'bg-orange-900 text-orange-300 border border-orange-700',
+  SANITIZED: 'bg-blue-900 text-blue-300 border border-blue-800',
+}
+
+const DISPLAY_STATE_STYLES = {
+  BLOCK: 'bg-red-900 text-red-300 border border-red-700',
+  ALERT: 'bg-yellow-900 text-yellow-300 border border-yellow-700',
+  NORMAL: 'bg-gray-800 text-gray-400 border border-gray-700',
+}
+
 function LabelBadge({ label }) {
   const style = LABEL_STYLES[label] ?? 'bg-gray-800 text-gray-400'
   return (
@@ -109,12 +121,20 @@ export default function ChainStatePanel({ sessionId }) {
           <p className="text-xs text-gray-500 mb-1">Session State</p>
           <span
             className={`text-sm px-3 py-1 rounded font-semibold ${
-              data.session_state === 'ALERT'
-                ? 'bg-yellow-900 text-yellow-300 border border-yellow-700'
-                : 'bg-green-900 text-green-300 border border-green-800'
+              SESSION_STATE_STYLES[data.session_state] ?? SESSION_STATE_STYLES.SAFE
             }`}
           >
             {data.session_state}
+          </span>
+        </div>
+        <div>
+          <p className="text-xs text-gray-500 mb-1">Severity</p>
+          <span
+            className={`text-sm px-3 py-1 rounded font-semibold ${
+              DISPLAY_STATE_STYLES[data.display_state] ?? DISPLAY_STATE_STYLES.NORMAL
+            }`}
+          >
+            {data.display_state}
           </span>
         </div>
         <div className="ml-auto text-right">
@@ -122,6 +142,12 @@ export default function ChainStatePanel({ sessionId }) {
           <p className="text-sm text-gray-300">{data.window_entries?.length ?? 0} / {data.window_size} calls</p>
         </div>
       </div>
+
+      {data.last_transition_reason && (
+        <div className="px-3 py-2 bg-gray-900 border border-gray-800 rounded text-sm text-gray-300">
+          <span className="text-gray-500">Last transition:</span> {data.last_transition_reason}
+        </div>
+      )}
 
       {/* Active combinations */}
       {data.active_combinations?.length > 0 && (

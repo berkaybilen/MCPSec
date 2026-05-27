@@ -62,6 +62,7 @@ export const deleteRule = (id) => del(`/rules/${id}`)
 // Backends
 export const fetchBackends = () => get('/backends')
 export const triggerRescan = () => post('/rescan')
+export const resetRuntimeState = () => post('/backends/reset-runtime')
 
 // Anomaly config
 export const fetchAnomalyConfig = () => get('/anomaly-config')

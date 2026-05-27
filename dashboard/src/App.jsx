@@ -27,12 +27,14 @@ export default function App() {
   const [monitorTab, setMonitorTab] = useState('events')
   const [liveEvents, setLiveEvents] = useState([])
   const [wsStatus, setWsStatus] = useState('connecting')
+  const [refreshToken, setRefreshToken] = useState(0)
 
   const refresh = useCallback(async () => {
     try {
       const [s, st] = await Promise.all([fetchSessions(), fetchStats()])
       setSessions(s)
       setStats(st)
+      setRefreshToken((prev) => prev + 1)
     } catch { /* API may not be running yet */ }
   }, [])
 
@@ -57,6 +59,12 @@ export default function App() {
   const handleSelectSession = (sessionId) => {
     setSelectedSession((prev) => (prev === sessionId ? null : sessionId))
     setMonitorTab('events')
+  }
+
+  const handleRuntimeReset = () => {
+    setSelectedSession(null)
+    setLiveEvents([])
+    refresh()
   }
 
   const showSidebar = page === 'monitor'
@@ -121,7 +129,11 @@ export default function App() {
               </div>
               <div className="flex-1 overflow-hidden">
                 {monitorTab === 'events' && (
-                  <EventFeed liveEvents={liveEvents} selectedSession={selectedSession} />
+                  <EventFeed
+                    liveEvents={liveEvents}
+                    selectedSession={selectedSession}
+                    refreshToken={refreshToken}
+                  />
                 )}
                 {monitorTab === 'chain' && (
                   <ChainStatePanel sessionId={selectedSession} />
@@ -133,7 +145,9 @@ export default function App() {
 
           {page === 'threats' && <ThreatPanel />}
           {page === 'rules' && <RulesPanel />}
-          {page === 'backends' && <BackendsPanel onRescan={refresh} />}
+          {page === 'backends' && (
+            <BackendsPanel onRescan={refresh} onRuntimeReset={handleRuntimeReset} />
+          )}
           {page === 'anomaly' && <AnomalyPanel />}
         </main>
       </div>

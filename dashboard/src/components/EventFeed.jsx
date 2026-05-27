@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { fetchEvents } from '../api'
 
 const DECISION_STYLES = {
@@ -89,53 +89,74 @@ function EventRow({ event }) {
 
 const FILTER_OPTIONS = ['all', 'block', 'alert', 'log', 'pass']
 
-export default function EventFeed({ liveEvents, selectedSession }) {
-  const [filter, setFilter] = useState('all')
-  const [historical, setHistorical] = useState([])
-  const [loading, setLoading] = useState(false)
+function eventKey(event) {
+  return event.id
+    ? `db:${event.id}`
+    : [
+        event.session_id,
+        event.timestamp,
+        event.direction,
+        event.tool_name || event.type,
+        event.decision,
+        (event.flags || []).join(','),
+      ].join('|')
+}
 
-  // Fetch historical events from the DB whenever the selection changes.
-  // liveEvents (WebSocket) only has what arrived since the dashboard opened;
-  // history fills in everything that was persisted before then.
+export default function EventFeed({ liveEvents, selectedSession, refreshToken }) {
+  const [filter, setFilter] = useState('all')
+  const [persistedEvents, setPersistedEvents] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
   useEffect(() => {
-    let cancelled = false
+    let active = true
+
     async function load() {
       setLoading(true)
+      setError(null)
       try {
-        const params = selectedSession
-          ? { session_id: selectedSession, limit: 500 }
-          : { limit: 200 }
-        const events = await fetchEvents(params)
-        if (!cancelled) setHistorical(events)
-      } catch {
-        if (!cancelled) setHistorical([])
+        const events = await fetchEvents(
+          selectedSession ? { session_id: selectedSession, limit: 1000 } : { limit: 200 }
+        )
+        if (active) {
+          setPersistedEvents(events)
+        }
+      } catch (e) {
+        if (active) {
+          setError(e.message)
+        }
       } finally {
-        if (!cancelled) setLoading(false)
+        if (active) {
+          setLoading(false)
+        }
       }
     }
-    load()
-    return () => { cancelled = true }
-  }, [selectedSession])
 
-  // Merge: live events (in-memory, may include type=chain_tracking_*) + DB history.
-  // Dedup by (session_id|timestamp|direction|tool_name) — same physical event
-  // appears in both buckets if it arrived while dashboard was open.
-  const liveFiltered = selectedSession
+    load()
+    return () => {
+      active = false
+    }
+  }, [selectedSession, refreshToken])
+
+  const matchingLiveEvents = selectedSession
     ? liveEvents.filter((e) => e.session_id === selectedSession)
     : liveEvents
-  const seen = new Set()
-  const merged = [...liveFiltered, ...historical].filter((e) => {
-    const key = `${e.session_id}|${e.timestamp}|${e.direction}|${e.tool_name}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-  merged.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
 
-  const filtered =
-    filter === 'all'
-      ? merged
-      : merged.filter((e) => e.decision === filter || e.type?.includes(filter))
+  const events = useMemo(() => {
+    const merged = []
+    const seen = new Set()
+    for (const event of [...matchingLiveEvents, ...persistedEvents]) {
+      const key = eventKey(event)
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(event)
+    }
+    return merged
+  }, [matchingLiveEvents, persistedEvents])
+
+  const filtered = filter === 'all'
+    ? events
+    : events.filter((e) => e.decision === filter || e.type?.includes(filter))
 
   return (
     <div className="flex flex-col h-full">
@@ -162,19 +183,27 @@ export default function EventFeed({ liveEvents, selectedSession }) {
 
       {/* Event list */}
       <div className="flex-1 overflow-y-auto">
-        {filtered.length === 0 ? (
+        {error && (
+          <div className="p-8 text-center text-red-500 text-sm">
+            {error}
+          </div>
+        )}
+        {!error && loading && events.length === 0 && (
           <div className="p-8 text-center text-gray-600 text-sm">
-            {loading
-              ? 'Loading events…'
-              : merged.length === 0
-                ? selectedSession
-                  ? 'No events for this session.'
-                  : 'No events yet. Make tool calls through the proxy.'
-                : 'No events match the current filter.'}
+            Loading events…
+          </div>
+        )}
+        {!error && !loading && filtered.length === 0 ? (
+          <div className="p-8 text-center text-gray-600 text-sm">
+            {events.length === 0
+              ? selectedSession
+                ? 'No persisted events for the selected session yet.'
+                : 'No persisted events yet. Run a demo scenario or use the proxy.'
+              : 'No events match the current filter.'}
           </div>
         ) : (
           filtered.map((event, i) => (
-            <EventRow key={`${event.session_id}-${event.timestamp}-${i}`} event={event} />
+            <EventRow key={eventKey(event) || `${event.session_id}-${event.timestamp}-${i}`} event={event} />
           ))
         )}
       </div>

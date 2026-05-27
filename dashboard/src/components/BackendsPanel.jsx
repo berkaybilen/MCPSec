@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { fetchBackends, triggerRescan } from '../api'
+import { fetchBackends, resetRuntimeState, triggerRescan } from '../api'
 
 function StatusDot({ status }) {
   const color = status === 'running' ? 'bg-green-500' : 'bg-red-500'
@@ -43,11 +43,12 @@ function BackendCard({ backend }) {
   )
 }
 
-export default function BackendsPanel({ onRescan }) {
+export default function BackendsPanel({ onRescan, onRuntimeReset }) {
   const [backends, setBackends] = useState([])
   const [error, setError] = useState(null)
   const [rescanning, setRescanning] = useState(false)
   const [rescanMsg, setRescanMsg] = useState(null)
+  const [resetting, setResetting] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -73,6 +74,28 @@ export default function BackendsPanel({ onRescan }) {
     }
   }
 
+  const handleResetRuntime = async () => {
+    const confirmed = window.confirm(
+      'Clear stored demo sessions, events, and cached analysis results? This cannot be undone.'
+    )
+    if (!confirmed) return
+
+    setResetting(true)
+    setRescanMsg(null)
+    try {
+      const result = await resetRuntimeState()
+      setRescanMsg(
+        `Runtime data cleared — removed ${result.deleted_sessions} sessions and ${result.deleted_events} events.`
+      )
+      await load()
+      onRuntimeReset?.()
+    } catch (e) {
+      setRescanMsg(`Reset failed: ${e.message}`)
+    } finally {
+      setResetting(false)
+    }
+  }
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Toolbar */}
@@ -83,23 +106,36 @@ export default function BackendsPanel({ onRescan }) {
             MCP backends connected through the proxy
           </p>
         </div>
-        <button
-          onClick={handleRescan}
-          disabled={rescanning}
-          className={`flex items-center gap-1.5 px-4 py-1.5 rounded text-sm font-medium transition-colors ${
-            rescanning
-              ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
-              : 'bg-blue-600 hover:bg-blue-500 text-white'
-          }`}
-        >
-          <svg
-            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-            className={`w-4 h-4 ${rescanning ? 'animate-spin' : ''}`}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleResetRuntime}
+            disabled={resetting}
+            className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${
+              resetting
+                ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                : 'bg-red-900 hover:bg-red-800 text-red-100'
+            }`}
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-          </svg>
-          {rescanning ? 'Scanning…' : 'Rescan'}
-        </button>
+            {resetting ? 'Clearing…' : 'Clear Demo Data'}
+          </button>
+          <button
+            onClick={handleRescan}
+            disabled={rescanning}
+            className={`flex items-center gap-1.5 px-4 py-1.5 rounded text-sm font-medium transition-colors ${
+              rescanning
+                ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-500 text-white'
+            }`}
+          >
+            <svg
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+              className={`w-4 h-4 ${rescanning ? 'animate-spin' : ''}`}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+            {rescanning ? 'Scanning…' : 'Rescan'}
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-5 space-y-3">

@@ -7,22 +7,10 @@ api:
   enabled: true
 
 backends:
-  - name: filesystem
+  - name: demo
     transport: stdio
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-  - name: everything
-    transport: stdio
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-everything"]
-  - name: gmail
-    transport: stdio
-    command: "npx"
-    args: ["-y", "@shinzolabs/gmail-mcp"]
-  - name: puppeteer
-    transport: stdio
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-puppeteer"] 
+    command: "./.venv/bin/python"
+    args: ["tests/mock_mcp_server.py"]
 
 enforcement:
   default_mode: alert
@@ -34,7 +22,8 @@ session:
 
 state_machine:
   enabled: true
-  sanitizer_tools: []
+  sanitizer_tools:
+    - sanitize_content
 
 features:
   embedding_filter: false
@@ -44,14 +33,14 @@ features:
 
 discovery:
   schema_probing: false
-  hidden_tool_detection: true
-  tech_fingerprinting: true
-  change_detection: true
-  probing_timeout_ms: 5000
+  hidden_tool_detection: false
+  tech_fingerprinting: false
+  change_detection: false
+  probing_timeout_ms: 1000
 
 toxic_flow:
   enabled: true
-  result_path: "storage/results/toxic_flow_result.json"
+  result_path: "mcpsec/storage/results/toxic_flow_result.json"
 
   thresholds:
     u: 5
@@ -62,28 +51,19 @@ toxic_flow:
   compound_bonus: 4
 
   semantic:
-    enabled: true
+    enabled: false
     model: "all-MiniLM-L6-v2"
     confirm_threshold: 0.75
     support_threshold: 0.55
     contradict_threshold: 0.35
     borderline_window: 1
 
-  confidence_bands:
-    very_high: 0.85
-    high: 0.70
-    medium: 0.50
-    low: 0.35
-
-  recommendations:
-    engine: "template"
-
 chain_tracking:
   enabled: true
   normal_window_size: 10
   alert_timeout_minutes: null
   data_flow_tracking: false
-  result_path: "storage/results/toxic_flow_result.json"
+  result_path: "mcpsec/storage/results/toxic_flow_result.json"
 
   policies:
     USE:
@@ -101,14 +81,3 @@ chain_tracking:
       on_complete: ALERT
 
   default_policy: LOG
-
-anomaly_detection:
-  enabled: true
-  frequency:
-    enabled: true
-    max_per_minute: 30
-    max_per_hour: 500
-  off_hours:
-    enabled: true
-    start_hour: 0    # midnight
-    end_hour: 6      # 6am (exclusive)
