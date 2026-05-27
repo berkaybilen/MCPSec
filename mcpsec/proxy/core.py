@@ -77,7 +77,7 @@ class ProxyCore:
         if fn is not None:
             await fn(msg)
         elif self._transport is not None:
-            await self._send_to_client(msg)
+            await self._transport.send_to_client(msg)
 
     @property
     def is_running(self) -> bool:
