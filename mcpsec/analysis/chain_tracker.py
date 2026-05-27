@@ -153,11 +153,6 @@ class ChainTracker:
     # ------------------------------------------------------------------
 
     def _get_window(self, session: Any) -> list[ToolSequenceEntry]:
-        from ..proxy.session import SessionState  # noqa: PLC0415
-
-        if session.state == SessionState.ALERT and session.alert_triggered_at is not None:
-            cutoff = session.alert_triggered_at
-            return [e for e in session.tool_sequence if e.timestamp >= cutoff]
         size = self._config.normal_window_size
         return session.tool_sequence[-size:]
 
@@ -301,8 +296,6 @@ class ChainTracker:
             else:
                 base = policy.on_complete.upper()
 
-        if session_state == "ALERT":
-            return ESCALATION.get(base, base)
         return base
 
     # ------------------------------------------------------------------
@@ -393,6 +386,12 @@ class ChainTracker:
         return {
             "session_id": session.session_id,
             "session_state": session.state.value,
+            "last_transition_reason": getattr(session, "last_transition_reason", None),
+            "state_changed_at": (
+                session.state_changed_at.isoformat()
+                if getattr(session, "state_changed_at", None) is not None
+                else None
+            ),
             "current_chain_state": current_state,
             "window_size": self._config.normal_window_size,
             "window_entries": [
@@ -408,3 +407,55 @@ class ChainTracker:
             "data_flow_tracking": self._config.data_flow_tracking,
             "alert_timeout_minutes": self._config.alert_timeout_minutes,
         }
+
+
+def reconstruct_chain_state(
+    tracker: ChainTracker,
+    *,
+    session_id: str,
+    session_state: str,
+    events: list[dict[str, Any]],
+    routing_table: dict[str, str] | None = None,
+    state_changed_at: str | None = None,
+    last_transition_reason: str | None = None,
+) -> dict[str, Any]:
+    from ..proxy.session import SessionState  # noqa: PLC0415
+
+    @dataclass
+    class PersistedSessionView:
+        session_id: str
+        state: SessionState
+        state_changed_at: datetime | None
+        last_transition_reason: str | None
+        tool_sequence: list[ToolSequenceEntry]
+
+    tool_sequence: list[ToolSequenceEntry] = []
+    for index, event in enumerate(events, start=1):
+        if event.get("direction") != "request":
+            continue
+        tool_name = event.get("tool_name", "")
+        timestamp = event.get("timestamp")
+        backend_name = (routing_table or {}).get(tool_name, "persisted")
+        tool_sequence.append(
+            ToolSequenceEntry(
+                tool=tool_name,
+                labels=tracker.get_labels(tool_name),
+                timestamp=datetime.fromisoformat(timestamp),
+                event_id=index,
+                backend=backend_name,
+            )
+        )
+
+    try:
+        normalized_state = SessionState(session_state)
+    except ValueError:
+        normalized_state = SessionState.NORMAL
+
+    session = PersistedSessionView(
+        session_id=session_id,
+        state=normalized_state,
+        state_changed_at=datetime.fromisoformat(state_changed_at) if state_changed_at else None,
+        last_transition_reason=last_transition_reason,
+        tool_sequence=tool_sequence,
+    )
+    return tracker.get_chain_state(session)

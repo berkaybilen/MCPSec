@@ -10,7 +10,7 @@ from typing import Any
 from ..analysis.regex_filter import analyze_request, analyze_response, redact_credentials
 from ..config import MCPSecConfig
 from ..discovery.discovery import ToolDiscovery
-from ..enforcement.engine import decide
+from ..enforcement.engine import apply_tainted_escalation, decide
 from ..storage.repository import EventRepository
 from .base import MCPMessage
 from .router import Router, ToolNotFoundError
@@ -255,7 +255,9 @@ class ProxyCore:
             )
 
         session = self._current_session
-        session.check_and_reset_timeout(self._config.session.alert_timeout_minutes)
+        tool_labels = self._tool_labels(tool_name)
+        if self._config.state_machine.enabled:
+            session.apply_request_context(tool_name, tool_labels)
 
         # Record request event
         request_event = SessionEvent(
@@ -275,14 +277,18 @@ class ProxyCore:
             rules_file=self._config.enforcement.rules_file,
             session_state=session.state.value,
         )
+        req_result = apply_tainted_escalation(
+            req_result,
+            tool_labels=tool_labels,
+            session_state=session.state.value,
+        )
         request_event.flags = req_flags
         request_event.decision = req_result.decision
 
-        self._repo.save_event(session.session_id, request_event.to_dict())
-        self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, len(session.events))
-
         if req_result.is_blocking:
             logger.warning("BLOCKED request: tool=%s flags=%s", tool_name, req_flags)
+            self._repo.save_event(session.session_id, request_event.to_dict())
+            self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, len(session.events))
             err = MCPMessage.make_error(msg.id, -32000, f"Blocked by MCPSec: {req_flags}")
             await self._transport.send_to_client(err)
             return
@@ -315,8 +321,12 @@ class ProxyCore:
                 )
                 request_event.decision = "block"
                 self._repo.save_event(session.session_id, request_event.to_dict())
+                self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, len(session.events))
                 await self._transport.send_to_client(err)
                 return
+
+        self._repo.save_event(session.session_id, request_event.to_dict())
+        self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, len(session.events))
 
         # Forward to backend
         response = await self._transport.send_to_backend(backend_name, msg)
@@ -331,11 +341,6 @@ class ProxyCore:
             session_state=session.state.value,
         )
 
-        # Session ALERT transition on injection_detected in response
-        if "injection_detected" in resp_flags and session.state.value == "NORMAL":
-            session.transition_to_alert()
-            logger.warning("Session transitioned to ALERT: injection_detected in response of tool=%s", tool_name)
-
         # Redact credentials from response before forwarding to client
         if resp_result.redact:
             resp_content = redact_credentials(resp_content)
@@ -348,6 +353,15 @@ class ProxyCore:
                     raw=response.raw,
                 )
             logger.info("Redacted credentials in response: tool=%s", tool_name)
+
+        if self._config.state_machine.enabled:
+            session.apply_response_context(
+                tool_name,
+                tool_labels,
+                resp_flags,
+                resp_content,
+                self._config.state_machine.sanitizer_tools,
+            )
 
         if req_flags:
             logger.warning("REQUEST  flags=%s decision=%s tool=%s", req_flags, req_result.decision, tool_name)
@@ -368,6 +382,11 @@ class ProxyCore:
         self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, len(session.events))
 
         await self._transport.send_to_client(response)
+
+    def _tool_labels(self, tool_name: str) -> list[str]:
+        if self.chain_tracker is None:
+            return []
+        return self.chain_tracker.get_labels(tool_name)
 
     async def _handle_notification(self, msg: MCPMessage) -> None:
         """Fire-and-forget: forward notification to all backends, no response expected."""

@@ -36,6 +36,11 @@ class SessionConfig(BaseModel):
     sliding_window_size: int = 10
 
 
+class StateMachineConfig(BaseModel):
+    enabled: bool = True
+    sanitizer_tools: list[str] = Field(default_factory=list)
+
+
 class FeaturesConfig(BaseModel):
     embedding_filter: bool = False
     llm_evaluator: bool = False
@@ -113,6 +118,7 @@ class MCPSecConfig(BaseModel):
     backends: list[BackendConfig] = Field(default_factory=list)
     enforcement: EnforcementConfig = Field(default_factory=EnforcementConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
+    state_machine: StateMachineConfig = Field(default_factory=StateMachineConfig)
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
     discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
     toxic_flow: ToxicFlowConfig = Field(default_factory=ToxicFlowConfig)
