@@ -9,5 +9,6 @@ from . import (  # noqa: F401
     rescan,
     routing,
     rules,
+    scenarios,
     sessions,
 )

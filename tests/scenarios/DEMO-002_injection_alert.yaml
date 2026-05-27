@@ -1,5 +1,10 @@
 id: DEMO-002
 name: Untrusted Email Triggers Injection Alert
+description: >
+  Simulates reading an email that contains a prompt-injection payload
+  ("Ignore previous instructions"). MCPSec detects the injection pattern
+  in the tool response, raises an alert, and marks the session as TAINTED
+  to flag all subsequent calls for elevated scrutiny.
 steps:
   - tool: read_untrusted_email
     expect_response:

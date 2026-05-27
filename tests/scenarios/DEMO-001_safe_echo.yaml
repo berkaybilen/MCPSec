@@ -1,5 +1,9 @@
 id: DEMO-001
 name: Safe Echo Passes
+description: >
+  Baseline test. A benign tool call passes through the proxy without
+  triggering any security rules. Verifies the happy path produces no
+  false positives and the session remains in SAFE state.
 steps:
   - tool: echo_safe
     arguments:

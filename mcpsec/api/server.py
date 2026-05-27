@@ -18,6 +18,7 @@ from .routes import (
     rescan,
     routing,
     rules,
+    scenarios,
     sessions,
 )
 from .websocket import router as ws_router
@@ -47,6 +48,7 @@ def create_app() -> FastAPI:
     app.include_router(features.router)
     app.include_router(rescan.router)
     app.include_router(anomaly_config.router)
+    app.include_router(scenarios.router)
     app.include_router(ws_router)
 
     return app
