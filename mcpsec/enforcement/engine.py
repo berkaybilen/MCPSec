@@ -44,6 +44,11 @@ def _merge(current: str, candidate: str) -> str:
     return current if _PRIORITY.get(current, 0) >= _PRIORITY.get(candidate, 0) else candidate
 
 
+def more_restrictive(a: str, b: str) -> str:
+    """Public helper: the more restrictive of two decisions (pass<log<alert<block)."""
+    return _merge(a, b)
+
+
 def decide(
     flags: list[str],
     global_mode: str,
@@ -88,13 +93,6 @@ def decide(
             candidate = global_mode.lower()
 
         decision = _merge(decision, candidate)  # type: ignore[assignment]
-
-    # Session ALERT state escalation — raise severity one tier
-    if session_state == "ALERT" and decision != "pass":
-        escalated = _ESCALATION.get(decision, decision)
-        if escalated != decision:
-            logger.debug("Enforcement escalation (ALERT state): %s → %s", decision, escalated)
-        decision = escalated  # type: ignore[assignment]
 
     return EnforcementResult(
         decision=decision,

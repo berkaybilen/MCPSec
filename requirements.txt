@@ -11,3 +11,4 @@ uvicorn[standard]
 # Development / testing
 pytest
 pytest-asyncio
+httpx

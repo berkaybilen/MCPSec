@@ -18,7 +18,7 @@ _current_send_fn: contextvars.ContextVar[
 from ..analysis.regex_filter import analyze_request, analyze_response, redact_credentials
 from ..config import MCPSecConfig
 from ..discovery.discovery import ToolDiscovery
-from ..enforcement.engine import apply_tainted_escalation, decide
+from ..enforcement.engine import apply_tainted_escalation, decide, more_restrictive
 from ..storage.repository import EventRepository
 from .base import MCPMessage
 from .router import Router, ToolNotFoundError
@@ -213,12 +213,23 @@ class ProxyCore:
             except Exception as exc:
                 logger.error("ChainTracker init failed (non-fatal): %s", exc)
 
-        # Anomaly detection — global, session-independent frequency + off-hours
+        # Anomaly detection — predefined rules + adaptive EMA baseline,
+        # severity fused with Toxic Flow labels (context-aware scoring)
         if self._config.anomaly_detection.enabled:
             try:
                 from ..analysis.anomaly_detector import AnomalyDetector  # noqa: PLC0415
-                self.anomaly_detector = AnomalyDetector(self._config.anomaly_detection)
-                logger.info("AnomalyDetector initialized.")
+                tf_loader = None
+                if self._config.anomaly_detection.toxic_flow_integration.enabled:
+                    from ..analysis.toxic_flow import ToxicFlowLoader  # noqa: PLC0415
+                    tf_loader = ToxicFlowLoader(self._config.toxic_flow.result_path)
+                    tf_loader.load()
+                self.anomaly_detector = AnomalyDetector(
+                    self._config.anomaly_detection, tf_loader
+                )
+                logger.info(
+                    "AnomalyDetector initialized (toxic-flow fusion: %s).",
+                    "on" if tf_loader is not None else "off",
+                )
             except Exception as exc:
                 logger.error("AnomalyDetector init failed (non-fatal): %s", exc)
 
@@ -435,31 +446,41 @@ class ProxyCore:
                 await self._send_to_client(err)
                 return
 
-        # Anomaly detection — frequency + off-hours (global, session-independent)
+        # Anomaly detection — predefined + adaptive z-score, severity fused
+        # with Toxic Flow risk: final = clip(base × multiplier)
         if self.anomaly_detector is not None:
-            anomaly_flags = self.anomaly_detector.check()
-            if anomaly_flags:
-                anomaly_result = decide(
-                    anomaly_flags,
+            anomaly = self.anomaly_detector.check(tool_name)
+            if anomaly.flags:
+                # Per-flag rule overrides (rules.yaml) still apply; take the
+                # more restrictive of rule decision and severity-based action.
+                rule_result = decide(
+                    anomaly.flags,
                     self._config.enforcement.default_mode,
                     rules_file=self._config.enforcement.rules_file,
                     session_state=session.state.value,
                 )
+                decision = more_restrictive(anomaly.action, rule_result.decision)
                 logger.warning(
-                    "Anomaly detected: flags=%s decision=%s tool=%s",
-                    anomaly_flags,
-                    anomaly_result.decision,
+                    "Anomaly detected: flags=%s base=%s multiplier=%.1f final=%s decision=%s tool=%s",
+                    anomaly.flags,
+                    anomaly.base_severity,
+                    anomaly.multiplier,
+                    anomaly.final_severity,
+                    decision,
                     tool_name,
                 )
-                request_event.flags = list(request_event.flags) + anomaly_flags
-                if anomaly_result.is_blocking:
+                request_event.flags = list(request_event.flags) + anomaly.flags + [
+                    f"anomaly_severity:{anomaly.final_severity}"
+                ]
+                if decision == "block":
                     request_event.decision = "block"
                     self._repo.save_event(session.session_id, request_event.to_dict())
                     self._repo.upsert_session(session.session_id, session.created_at.isoformat(), session.state.value, len(session.events))
                     err = MCPMessage.make_error(
                         msg.id,
                         -32000,
-                        f"Blocked by MCPSec: anomaly detected ({anomaly_flags})",
+                        f"Blocked by MCPSec: anomaly detected "
+                        f"(severity={anomaly.final_severity}, flags={anomaly.flags})",
                     )
                     await self._send_to_client(err)
                     return

@@ -124,10 +124,49 @@ class AnomalyOffHoursConfig(BaseModel):
     end_hour: int = 6     # exclusive, 0–23
 
 
+class AnomalyLearningConfig(BaseModel):
+    enabled: bool = True
+    alpha: float = 0.1              # EMA weight of new sample
+    warmup_hours: float = 24.0      # collect-only period before z-scoring
+    min_data_points: int = 100      # per-tool samples required before z-scoring
+    outlier_z: float = 5.0          # |z| above this is excluded from EMA updates
+
+
+class AnomalyZThresholds(BaseModel):
+    low: float = 2.0      # 2 <= |z| < 3  -> LOW
+    medium: float = 3.0   # 3 <= |z| < 5  -> MEDIUM
+    high: float = 5.0     # |z| >= 5      -> HIGH
+
+
+class AnomalyMultipliers(BaseModel):
+    no_label: float = 0.5
+    single_label: float = 1.0
+    dual_combination: float = 1.5
+    lethal_trifecta: float = 2.0
+
+
+class AnomalyToxicFlowIntegrationConfig(BaseModel):
+    enabled: bool = True
+    multipliers: AnomalyMultipliers = Field(default_factory=AnomalyMultipliers)
+
+
+class AnomalySeverityActions(BaseModel):
+    low: Literal["pass", "log", "alert", "block"] = "log"
+    medium: Literal["pass", "log", "alert", "block"] = "alert"
+    high: Literal["pass", "log", "alert", "block"] = "alert"
+    critical: Literal["pass", "log", "alert", "block"] = "block"
+
+
 class AnomalyDetectionConfig(BaseModel):
     enabled: bool = True
     frequency: AnomalyFrequencyConfig = Field(default_factory=AnomalyFrequencyConfig)
     off_hours: AnomalyOffHoursConfig = Field(default_factory=AnomalyOffHoursConfig)
+    learning: AnomalyLearningConfig = Field(default_factory=AnomalyLearningConfig)
+    z_thresholds: AnomalyZThresholds = Field(default_factory=AnomalyZThresholds)
+    toxic_flow_integration: AnomalyToxicFlowIntegrationConfig = Field(
+        default_factory=AnomalyToxicFlowIntegrationConfig
+    )
+    severity_actions: AnomalySeverityActions = Field(default_factory=AnomalySeverityActions)
 
 
 class MCPSecConfig(BaseModel):

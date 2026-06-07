@@ -112,3 +112,25 @@ anomaly_detection:
     enabled: true
     start_hour: 0    # midnight
     end_hour: 6      # 6am (exclusive)
+  learning:                  # adaptive per-tool EMA baseline
+    enabled: true
+    alpha: 0.1               # EMA weight of new sample (low = slow, stable)
+    warmup_hours: 24         # collect-only period before z-scoring
+    min_data_points: 100     # per-tool samples required before z-scoring
+    outlier_z: 5.0           # |z| above this excluded from EMA (don't learn attacks)
+  z_thresholds:
+    low: 2.0                 # 2 <= |z| < 3  -> LOW
+    medium: 3.0              # 3 <= |z| < 5  -> MEDIUM
+    high: 5.0                # |z| >= 5      -> HIGH
+  toxic_flow_integration:    # final = clip(base x multiplier)
+    enabled: true
+    multipliers:
+      no_label: 0.5
+      single_label: 1.0
+      dual_combination: 1.5
+      lethal_trifecta: 2.0
+  severity_actions:
+    low: log
+    medium: alert
+    high: alert
+    critical: block

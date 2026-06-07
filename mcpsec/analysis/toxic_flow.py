@@ -647,27 +647,33 @@ class ToxicFlowLoader:
             return []
         return self._data.get("tools", {}).get(tool_name, {}).get("labels", [])
 
-    def get_severity_multiplier(self, tool_name: str) -> float:
+    def get_severity_multiplier(self, tool_name: str, multipliers: dict | None = None) -> float:
         """
         Severity multiplier for Anomaly Detection:
-          CRITICAL path member  → 2.0
-          Dual-labeled tool     → 1.5
-          Single-labeled tool   → 1.0
-          Unlabeled tool        → 0.5
+          CRITICAL path member  → 2.0  (lethal_trifecta)
+          Dual-labeled tool     → 1.5  (dual_combination)
+          Single-labeled tool   → 1.0  (single_label)
+          Unlabeled tool        → 0.5  (no_label)
+
+        Pass `multipliers` (keys above) to override the defaults from config.
         """
+        m = {"no_label": 0.5, "single_label": 1.0, "dual_combination": 1.5, "lethal_trifecta": 2.0}
+        if multipliers:
+            m.update(multipliers)
+
         if self._data is None:
-            return 1.0
+            return m["single_label"]
 
         for path in self._data.get("dangerous_paths", []):
             if path["severity"] == "CRITICAL" and tool_name in path["chain"]:
-                return 2.0
+                return m["lethal_trifecta"]
 
         labels = self.get_labels(tool_name)
         if len(labels) >= 2:
-            return 1.5
+            return m["dual_combination"]
         if len(labels) == 1:
-            return 1.0
-        return 0.5
+            return m["single_label"]
+        return m["no_label"]
 
 
 # ---------------------------------------------------------------------------

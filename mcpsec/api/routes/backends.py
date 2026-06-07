@@ -11,7 +11,7 @@ from ...storage.repository import EventRepository
 
 router = APIRouter(prefix="/api/backends")
 
-_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "mcpsec-config.yaml")
+_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "mcpsec-config.yaml")
 
 
 def _save_config() -> None:
@@ -42,7 +42,7 @@ async def list_backends() -> list[dict[str, Any]]:
 async def add_backend(backend_data: dict[str, Any]) -> dict[str, Any]:
     if state.config is None:
         raise HTTPException(status_code=503, detail="Config not loaded.")
-    from config import BackendConfig  # noqa: PLC0415
+    from ...config import BackendConfig  # noqa: PLC0415
 
     try:
         new_backend = BackendConfig.model_validate(backend_data)
@@ -63,7 +63,7 @@ async def update_backend(name: str, update: dict[str, Any]) -> dict[str, Any]:
         if backend.name == name:
             merged = backend.model_dump()
             merged.update(update)
-            from config import BackendConfig  # noqa: PLC0415
+            from ...config import BackendConfig  # noqa: PLC0415
 
             try:
                 state.config.backends[i] = BackendConfig.model_validate(merged)

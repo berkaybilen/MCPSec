@@ -137,6 +137,12 @@ def _run_scenario_sync(scenario_path: str) -> dict[str, Any]:
     spec = yaml.safe_load(Path(scenario_path).read_text())
     start = time.time()
 
+    # Remove the stale result from a previous run so _wait_for_analysis()
+    # genuinely waits for THIS proxy's toxic-flow analysis. Otherwise the
+    # first tools/call can race ahead of ChainTracker init and chain/state
+    # expectations fail (e.g. USE matched as SE).
+    TOXIC_FLOW_RESULT.unlink(missing_ok=True)
+
     proc = subprocess.Popen(
         [str(PYTHON), "-m", "mcpsec", "--config", str(DEMO_CONFIG),
          "--no-api", "--log-file", str(LOG_FILE)],
